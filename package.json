@@ -1,6 +1,6 @@
 {
   "name": "vue-apollo-client",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Vue 3 Apollo Client with SSR, Codegen & Offline Support.",
   "author": "safdar-azeem",
   "license": "MIT",
