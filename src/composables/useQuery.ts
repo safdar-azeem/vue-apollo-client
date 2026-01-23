@@ -12,12 +12,14 @@ import { unwrapVariables } from '../utils/common'
 import { useSSRQuery } from './useSSRQuery'
 
 // Extend options
-export interface UseQueryOptions<TData = any, TVariables = any>
-   extends ApolloUseQueryOptions<TData, TVariables> {
+import { OperationVariables } from '@apollo/client/core'
+
+export interface UseQueryOptions<TData = any, TVariables = OperationVariables>
+   extends Omit<ApolloUseQueryOptions<TData, TVariables>, 'nextFetchPolicy'> {
    ssr?: boolean
    refetchOnUpdate?: boolean
    refetchTimeout?: number
-   nextFetchPolicy?: string
+   nextFetchPolicy?: string | ApolloUseQueryOptions<TData, TVariables>['nextFetchPolicy']
 }
 
 interface QueryCacheEntry<T> {
@@ -77,7 +79,7 @@ if (!isServer) {
   }, CLEANUP_INTERVAL);
 }
 
-export const useQuery = <TResult = any, TVariables = any>(
+export const useQuery = <TResult = any, TVariables extends OperationVariables = OperationVariables>(
   document: any,
   variables?: TVariables | (() => TVariables),
   options?: UseQueryOptions<TResult, TVariables>
@@ -103,7 +105,7 @@ export const useQuery = <TResult = any, TVariables = any>(
     return apolloUseQuery<TResult, TVariables>(document, variables, options);
   }
 
-  const reactiveVariables = reactive(typeof variables === 'function' ? variables() : variables || {})
+  const reactiveVariables = reactive(typeof variables === 'function' ? variables() : variables || {} as any)
 
   const instance = getCurrentInstance()
   const instanceId = instance?.uid ?? Math.random()
@@ -276,7 +278,7 @@ export const useQuery = <TResult = any, TVariables = any>(
           subscriber.setResult(result.data)
         })
       }
-      return result
+      return result as any
     } catch (error) {
       throw error
     } finally {
@@ -330,7 +332,7 @@ export const useQuery = <TResult = any, TVariables = any>(
       return toRaw(reactiveVariables)
     },
     (newVars) => {
-      if (queryRefetchOnUpdate === false || cacheEntry.manualRefetchTriggered) return
+      if (!queryRefetchOnUpdate || cacheEntry.manualRefetchTriggered) return
       
       updateActiveTimestamp()
       
@@ -378,7 +380,7 @@ export const useQuery = <TResult = any, TVariables = any>(
         () => route.fullPath,
         () => {
         if (isCacheOnly) return
-        if (queryRefetchOnUpdate === false || cacheEntry.manualRefetchTriggered) return
+        if (!queryRefetchOnUpdate || cacheEntry.manualRefetchTriggered) return
 
         updateActiveTimestamp()
         
@@ -406,7 +408,7 @@ export const useQuery = <TResult = any, TVariables = any>(
 
   onUpdated(() => {
     if (isCacheOnly) return
-    if (queryRefetchOnUpdate === false || cacheEntry.manualRefetchTriggered) return
+    if (!queryRefetchOnUpdate || cacheEntry.manualRefetchTriggered) return
 
     const subscriber = cacheEntry.subscribers.get(instanceId)
     if (!subscriber) return
