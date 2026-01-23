@@ -2,6 +2,9 @@
 import { generate } from '@graphql-codegen/cli'
 import { VueApolloViteOptions } from './types'
 import path from 'path'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
 
 export const runCodegen = async (options: VueApolloViteOptions, rootDir: string) => {
   const schema = options.schema || 'http://localhost:4000/graphql'
@@ -15,9 +18,9 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
       generates: {
         [output]: {
           plugins: [
-            'typescript',
-            'typescript-operations',
-            'typescript-vue-apollo',
+            require.resolve('@graphql-codegen/typescript'),
+            require.resolve('@graphql-codegen/typescript-operations'),
+            require.resolve('@graphql-codegen/typescript-vue-apollo'),
           ],
           config: {
             // CRITICAL: Point to this library for composables
