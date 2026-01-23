@@ -8,8 +8,8 @@ It provides features like Smart Queries (caching/refetching), SSR support, Offli
 
 ```bash
 npm install vue-apollo-client @apollo/client graphql @vue/apollo-composable
-npm install -D @graphql-codegen/cli
 ```
+> Note: `vue-router` is a peer dependency and assumed to be present in your project.
 
 ## Setup (Vite Plugin - Recommended)
 
@@ -26,8 +26,6 @@ export default defineConfig({
     vue(),
     vueApollo({
        // Optional: Defaults are smart enough
-       // documents: 'src/**\/*.graphql', 
-       // output: 'src/graphql/generated.ts'
     })
   ]
 })
@@ -65,18 +63,6 @@ app.mount('#app')
 
 Once you have your `.graphql` files, imports are auto-generated.
 
-```graphql
-# src/graphql/user.graphql
-query GetUser($id: ID!) {
-  user(id: $id) {
-    id
-    name
-  }
-}
-```
-
-Use it in your component:
-
 ```vue
 <script setup>
 import { useGetUserQuery } from './graphql/generated'
@@ -84,9 +70,3 @@ import { useGetUserQuery } from './graphql/generated'
 const { result } = useGetUserQuery({ id: '1' })
 </script>
 ```
-
-No manual codegen config required!
-
-## Manual Setup
-
-If you prefer manual control, see [Legacy Setup](#manual-setup-legacy).
