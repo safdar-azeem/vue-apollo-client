@@ -63,7 +63,7 @@ export const useSSRQuery = async (document: any, variables: any, options: any) =
       }
 
       const refetch = async (newVariables: any) => {
-         error.value = null
+         error.value = null as any
          
          try {
             const refetchResult = await apolloClient.query({
