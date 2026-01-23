@@ -10,12 +10,29 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: path.resolve(__dirname, 'src/index.ts'),
+      entry: {
+        'vue-apollo-client': path.resolve(__dirname, 'src/index.ts'),
+        vite: path.resolve(__dirname, 'src/vite/index.ts'),
+      },
       name: 'VueApolloClient',
-      fileName: (format) => `vue-apollo-client.${format === 'es' ? 'mjs' : 'umd.js'}`,
+      fileName: (format, entryName) => {
+        const ext = format === 'es' ? 'mjs' : 'js'
+        if (entryName === 'vite') {
+             return `vite.${ext}`
+        }
+        return `vue-apollo-client.${ext}`
+      },
     },
     rollupOptions: {
-      external: ['vue', 'vue-router', 'graphql'],
+      external: [
+          'vue', 
+          'vue-router', 
+          'graphql', 
+          '@graphql-codegen/cli', 
+          'vite', 
+          'path', 
+          'fs'
+      ], // Mark node-deps external
       output: {
         globals: {
           vue: 'Vue',
