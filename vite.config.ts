@@ -31,7 +31,8 @@ export default defineConfig({
           '@graphql-codegen/cli', 
           'vite', 
           'path', 
-          'fs'
+          'fs',
+          'module'
       ], // Mark node-deps external
       output: {
         globals: {
