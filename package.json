@@ -23,9 +23,14 @@
       "types": "./dist/vite/index.d.ts"
     }
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/safdar-azeem/vue-apollo-client.git"
+  },
   "scripts": {
     "build": "vite build",
-    "dev": "vite build --watch"
+    "dev": "vite build --watch",
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
     "graphql": "^16.0.0",
