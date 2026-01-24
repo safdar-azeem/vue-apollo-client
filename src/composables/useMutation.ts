@@ -6,7 +6,7 @@ import {
 } from '@vue/apollo-composable'
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { getGlobalConfig } from '../configStore'
-import { ApolloClient, gql } from '@apollo/client/core'
+import { ApolloClient, gql, OperationVariables } from '@apollo/client/core'
 
 const MUTATION_QUEUE_KEY = 'apollo_mutation_queue'
 let isSyncing = false 
@@ -72,7 +72,7 @@ const setupGlobalSync = (client: ApolloClient<any>, allowOffline: boolean) => {
   }
 }
 
-export const useMutation = <TResult = any, TVariables = any>(
+export const useMutation = <TResult = any, TVariables extends OperationVariables = OperationVariables>(
   document: any,
   options?: any
 ): UseMutationReturn<TResult, TVariables> => {
