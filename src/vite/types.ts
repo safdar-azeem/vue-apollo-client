@@ -1,4 +1,3 @@
-
 export interface VueApolloViteOptions {
   /**
    * Path to GraphQL files or pattern
@@ -24,7 +23,7 @@ export interface VueApolloViteOptions {
    * @default true
    */
   watch?: boolean
-  
+
   /**
    * Additional plugins or config for codegen
    */
