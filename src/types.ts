@@ -1,4 +1,3 @@
-
 import type { InMemoryCacheConfig, ApolloClientOptions } from '@apollo/client/core'
 import type { ApolloUploadConfig } from './utils/graphql.config'
 
@@ -13,7 +12,11 @@ export interface VueApolloClientOptions {
   refetchOnUpdate?: boolean
   refetchTimeout?: number
   allowOffline?: boolean
-  setContext?: (context: { operationName?: string; variables?: any; token?: string }) => Record<string, any>
+  setContext?: (context: {
+    operationName?: string
+    variables?: any
+    token?: string
+  }) => Record<string, any>
 }
 
 // Global config injection key
