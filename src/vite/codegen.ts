@@ -1,4 +1,3 @@
-
 import { generate } from '@graphql-codegen/cli'
 import { VueApolloViteOptions } from './types'
 import path from 'path'
@@ -9,8 +8,10 @@ const require = createRequire(import.meta.url)
 export const runCodegen = async (options: VueApolloViteOptions, rootDir: string) => {
   const schema = options.schema || 'http://localhost:4000/graphql'
   const documents = options.documents || 'src/**/*.{graphql,gql,ts}'
-  const output = options.output ? path.resolve(rootDir, options.output) : path.resolve(rootDir, 'src/graphql/generated.ts')
-  
+  const output = options.output
+    ? path.resolve(rootDir, options.output)
+    : path.resolve(rootDir, 'src/graphql/generated.ts')
+
   try {
     const config = {
       schema,
@@ -31,7 +32,7 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
             withHooks: true,
             withHOC: false,
             withComponent: false,
-            ...options.codegenConfig
+            ...options.codegenConfig,
           },
         },
       },
