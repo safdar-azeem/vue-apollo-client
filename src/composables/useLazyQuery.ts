@@ -1,12 +1,13 @@
 
 import { useLazyQuery as apolloUseLazyQuery, UseQueryReturn, UseQueryOptions } from '@vue/apollo-composable'
 import { ref, Ref } from 'vue'
+import { OperationVariables } from '@apollo/client/core'
 
 export interface UseLazyQueryReturn<TResult, TVariables> extends UseQueryReturn<TResult, TVariables> {
   load: (document?: any, variables?: TVariables, options?: UseQueryOptions<TResult, TVariables>) => Promise<any>
 }
 
-export const useLazyQuery = <TResult = any, TVariables = any>(
+export const useLazyQuery = <TResult = any, TVariables extends OperationVariables = OperationVariables>(
   document: any,
   variables?: TVariables | (() => TVariables),
   options?: UseQueryOptions<TResult, TVariables>
