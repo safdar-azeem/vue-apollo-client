@@ -1,4 +1,3 @@
-
 import type { Plugin } from 'vite'
 import { VueApolloViteOptions } from './types'
 import { runCodegen } from './codegen' // Assuming synchronous or handled async
@@ -22,25 +21,27 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
       root = config.root
     },
     async buildStart() {
-       // Initial run
-       await runCodegen(options, root)
+      // Initial run
+      await runCodegen(options, root)
     },
     handleHotUpdate({ file, server }) {
       if (file.endsWith('.graphql') || file.endsWith('.gql') || file.endsWith('.ts')) {
         // If it's a TS file, we should be careful not to infinite loop if it's the generated file
         // generated file location:
-        const output = options.output ? path.resolve(root, options.output) : path.resolve(root, 'src/graphql/generated.ts')
-        
+        const output = options.output
+          ? path.resolve(root, options.output)
+          : path.resolve(root, 'src/graphql/generated.ts')
+
         if (file === output) {
-           return
+          return
         }
 
         // Also check if TS file looks like a schema definition or just app logic?
         // Nuxt module watches everything. But efficient watching is better.
-        // For now, let's just trigger. 
+        // For now, let's just trigger.
         console.log(`[vue-apollo] File changed: ${file}, running codegen...`)
         debouncedCodegen()
       }
-    }
+    },
   }
 }
