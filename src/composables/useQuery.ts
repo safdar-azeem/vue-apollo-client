@@ -1,10 +1,19 @@
-
 import {
   useQuery as apolloUseQuery,
   UseQueryReturn,
-  UseQueryOptions as ApolloUseQueryOptions
+  UseQueryOptions as ApolloUseQueryOptions,
 } from '@vue/apollo-composable'
-import { getCurrentInstance, onMounted, onUpdated, onUnmounted, watch, reactive, ref, unref, toRaw } from 'vue'
+import {
+  getCurrentInstance,
+  onMounted,
+  onUpdated,
+  onUnmounted,
+  watch,
+  reactive,
+  ref,
+  unref,
+  toRaw,
+} from 'vue'
 import { useRoute } from 'vue-router'
 import { getGlobalConfig } from '../configStore'
 import { useLazyQuery } from './useLazyQuery'
@@ -15,12 +24,17 @@ import { useSSRQuery } from './useSSRQuery'
 import { OperationVariables } from '@apollo/client/core'
 import { WatchQueryFetchPolicy } from '@apollo/client/core'
 
-export interface UseQueryOptions<TData = any, TVariables = OperationVariables>
-   extends Omit<ApolloUseQueryOptions<TData, TVariables>, 'nextFetchPolicy'> {
-   ssr?: boolean
-   refetchOnUpdate?: boolean
-   refetchTimeout?: number
-   nextFetchPolicy?: WatchQueryFetchPolicy | string | ApolloUseQueryOptions<TData, TVariables>['nextFetchPolicy']
+export interface UseQueryOptions<TData = any, TVariables = OperationVariables> extends Omit<
+  ApolloUseQueryOptions<TData, TVariables>,
+  'nextFetchPolicy'
+> {
+  ssr?: boolean
+  refetchOnUpdate?: boolean
+  refetchTimeout?: number
+  nextFetchPolicy?:
+    | WatchQueryFetchPolicy
+    | string
+    | ApolloUseQueryOptions<TData, TVariables>['nextFetchPolicy']
 }
 
 interface QueryCacheEntry<T> {
@@ -49,35 +63,37 @@ const DEFAULT_REFETCH_TIMEOUT = 10000
 // Clean up logic
 const isServer = typeof window === 'undefined'
 if (!isServer) {
-  const CLEANUP_INTERVAL = 60000;
-  const MAX_INACTIVE_TIME = 300000; 
-  
+  const CLEANUP_INTERVAL = 60000
+  const MAX_INACTIVE_TIME = 300000
+
   setInterval(() => {
-    const now = Date.now();
-    
+    const now = Date.now()
+
     queryCache.forEach((entry, key) => {
-      if (entry.isCacheOnly) return;
-      
-      let hasActiveSubscribers = false;
-      entry.subscribers.forEach(sub => {
-        if (sub.isActive) hasActiveSubscribers = true;
-      });
-      
-      if (!hasActiveSubscribers && 
-          entry.lastActiveTimestamp && 
-          now - entry.lastActiveTimestamp > MAX_INACTIVE_TIME) {
-        const controller = pendingQueries.get(key);
+      if (entry.isCacheOnly) return
+
+      let hasActiveSubscribers = false
+      entry.subscribers.forEach((sub) => {
+        if (sub.isActive) hasActiveSubscribers = true
+      })
+
+      if (
+        !hasActiveSubscribers &&
+        entry.lastActiveTimestamp &&
+        now - entry.lastActiveTimestamp > MAX_INACTIVE_TIME
+      ) {
+        const controller = pendingQueries.get(key)
         if (controller) {
-          controller.abort();
-          pendingQueries.delete(key);
+          controller.abort()
+          pendingQueries.delete(key)
         }
-        
+
         if (!entry.manualRefetchTriggered) {
-          queryCache.delete(key);
+          queryCache.delete(key)
         }
       }
-    });
-  }, CLEANUP_INTERVAL);
+    })
+  }, CLEANUP_INTERVAL)
 }
 
 export const useQuery = <TResult = any, TVariables extends OperationVariables = OperationVariables>(
@@ -85,7 +101,6 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
   variables?: TVariables | (() => TVariables),
   options?: UseQueryOptions<TResult, TVariables>
 ): UseQueryReturn<TResult, TVariables> => {
-  
   if (isServer || options?.ssr) {
     // This returns a promise-like structure in Nuxt impl, but composables must return synchronous objects.
     // The Nuxt impl of useSSRQuery is async.
@@ -97,17 +112,19 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   const route = useRoute()
   const config = getGlobalConfig()
-  
+
   const globalRefetchOnUpdate = config?.refetchOnUpdate
   const queryRefetchOnUpdate =
     options?.refetchOnUpdate !== undefined ? options.refetchOnUpdate : globalRefetchOnUpdate
 
   if (!queryRefetchOnUpdate) {
     // @ts-ignore
-    return apolloUseQuery<TResult, TVariables>(document, variables, options);
+    return apolloUseQuery<TResult, TVariables>(document, variables, options)
   }
 
-  const reactiveVariables = reactive(typeof variables === 'function' ? variables() : variables || {} as any)
+  const reactiveVariables = reactive(
+    typeof variables === 'function' ? variables() : variables || ({} as any)
+  )
 
   const instance = getCurrentInstance()
   const instanceId = instance?.uid ?? Math.random()
@@ -138,7 +155,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
       manualRefetchTriggered: false,
       routeSnapshot: JSON.stringify(route?.fullPath), // Handle undefined route
       isCacheOnly,
-      lastActiveTimestamp: Date.now()
+      lastActiveTimestamp: Date.now(),
     })
   }
 
@@ -182,26 +199,28 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
   }
 
   const isQueryActive = () => {
-    if (cacheEntry.subscribers.has(instanceId) && 
-        cacheEntry.subscribers.get(instanceId)?.isActive) {
-      return true;
+    if (
+      cacheEntry.subscribers.has(instanceId) &&
+      cacheEntry.subscribers.get(instanceId)?.isActive
+    ) {
+      return true
     }
     for (const sub of cacheEntry.subscribers.values()) {
-      if (sub.isActive) return true;
+      if (sub.isActive) return true
     }
-    return false;
+    return false
   }
-  
+
   const updateActiveTimestamp = () => {
     if (isQueryActive()) {
-      cacheEntry.lastActiveTimestamp = Date.now();
+      cacheEntry.lastActiveTimestamp = Date.now()
     }
   }
-  
+
   const performRefetch = async (newVariables?: any) => {
     const now = Date.now()
     const timeoutValue = getRefetchTimeout()
-    
+
     updateActiveTimestamp()
 
     if (now - cacheEntry.timestamp < timeoutValue && cacheEntry.result) {
@@ -209,7 +228,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
       query.loading.value = false
       return Promise.resolve({ data: cacheEntry.result })
     }
-    
+
     if (!cacheEntry.manualRefetchTriggered && !isQueryActive()) {
       if (cacheEntry.result) {
         query.result.value = cacheEntry.result
@@ -225,8 +244,8 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
     if (isInitialLoad) {
       cacheEntry.loading = true
       query.loading.value = true
-      
-      cacheEntry.subscribers.forEach(subscriber => {
+
+      cacheEntry.subscribers.forEach((subscriber) => {
         subscriber.setLoading(true)
       })
     }
@@ -237,12 +256,12 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
     try {
       const result = await fetchPromise
-      
+
       if (!controller.signal.aborted) {
         if (result?.data) {
           cacheEntry.result = result.data
-          
-          cacheEntry.subscribers.forEach(subscriber => {
+
+          cacheEntry.subscribers.forEach((subscriber) => {
             subscriber.setResult(result.data)
             subscriber.setLoading(false)
           })
@@ -253,7 +272,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        console.error("Query error:", error)
+        console.error('Query error:', error)
         pendingQueries.delete(currentQueryKey)
       }
       throw error
@@ -267,7 +286,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
   query.refetch = async (...args) => {
     cacheEntry.manualRefetchTriggered = true
     cacheEntry.timestamp = Date.now()
-    
+
     cancelInFlightRequests()
 
     try {
@@ -275,8 +294,8 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
       if (result?.data) {
         cacheEntry.result = result.data
         query.result.value = result.data
-        
-        cacheEntry.subscribers.forEach(subscriber => {
+
+        cacheEntry.subscribers.forEach((subscriber) => {
           subscriber.setResult(result.data)
         })
       }
@@ -296,23 +315,23 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
       query.loading.value = loading
     },
     propsSnapshot: getPropsSnapshot(),
-    isActive: true
+    isActive: true,
   }
 
   const updateVisibility = (isVisible = true) => {
-    const sub = cacheEntry.subscribers.get(instanceId);
+    const sub = cacheEntry.subscribers.get(instanceId)
     if (sub) {
-      sub.isActive = isVisible;
+      sub.isActive = isVisible
       if (isVisible) {
-        updateActiveTimestamp();
+        updateActiveTimestamp()
       }
     }
   }
-  
+
   onMounted(() => {
     cacheEntry.subscribers.set(instanceId, subscriber)
-    updateVisibility(true);
-    
+    updateVisibility(true)
+
     if (cacheEntry.result) {
       query.result.value = cacheEntry.result
       query.loading.value = false
@@ -321,34 +340,34 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
     if (isCacheOnly && cacheEntry.result) return
 
     const now = Date.now()
-    const shouldFetch = !cacheEntry.result || 
-                        (now - cacheEntry.timestamp > getRefetchTimeout() && !cacheEntry.isCacheOnly);
-                        
+    const shouldFetch =
+      !cacheEntry.result ||
+      (now - cacheEntry.timestamp > getRefetchTimeout() && !cacheEntry.isCacheOnly)
+
     if (shouldFetch) {
       performRefetch()
     }
   })
-  
+
   watch(
     () => {
       return toRaw(reactiveVariables)
     },
     (newVars) => {
       if (!queryRefetchOnUpdate || cacheEntry.manualRefetchTriggered) return
-      
+
       updateActiveTimestamp()
-      
+
       const newVariables = unwrapVariables(newVars)
       const newQueryKey = getQueryKey()
-      
+
       if (newQueryKey !== currentQueryKey) {
-        
         if (cacheEntry.subscribers.size === 1) {
           queryCache.delete(currentQueryKey)
         } else {
           cacheEntry.subscribers.delete(instanceId)
         }
-        
+
         currentQueryKey = newQueryKey
 
         if (!queryCache.has(currentQueryKey)) {
@@ -359,7 +378,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
             manualRefetchTriggered: false,
             routeSnapshot: JSON.stringify(route?.fullPath),
             isCacheOnly,
-            lastActiveTimestamp: Date.now()
+            lastActiveTimestamp: Date.now(),
           })
         }
 
@@ -379,27 +398,27 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   if (route) {
     watch(
-        () => route.fullPath,
-        () => {
+      () => route.fullPath,
+      () => {
         if (isCacheOnly) return
         if (!queryRefetchOnUpdate || cacheEntry.manualRefetchTriggered) return
 
         updateActiveTimestamp()
-        
+
         const now = Date.now()
         if (now - cacheEntry.timestamp > getRefetchTimeout()) {
-            if (hasRouteChanged() && isQueryActive()) {
+          if (hasRouteChanged() && isQueryActive()) {
             performRefetch()
-            }
+          }
         }
-        }
+      }
     )
   }
 
   watch(query.result, (newData) => {
     if (newData) {
       cacheEntry.result = newData
-      
+
       cacheEntry.subscribers.forEach((sub, subId) => {
         if (subId !== instanceId) {
           sub.setResult(newData)
@@ -414,30 +433,32 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
     const subscriber = cacheEntry.subscribers.get(instanceId)
     if (!subscriber) return
-    
+
     subscriber.isActive = true
     updateActiveTimestamp()
 
     const now = Date.now()
-    if (havePropsChanged(subscriber.propsSnapshot) && 
-        now - cacheEntry.timestamp > getRefetchTimeout() && 
-        isQueryActive()) {
+    if (
+      havePropsChanged(subscriber.propsSnapshot) &&
+      now - cacheEntry.timestamp > getRefetchTimeout() &&
+      isQueryActive()
+    ) {
       subscriber.propsSnapshot = getPropsSnapshot()
       performRefetch()
     }
   })
 
   onUnmounted(() => {
-    updateVisibility(false);
-    
+    updateVisibility(false)
+
     if (isCacheOnly) {
-      const sub = cacheEntry.subscribers.get(instanceId);
+      const sub = cacheEntry.subscribers.get(instanceId)
       if (sub) {
-        sub.isActive = false;
+        sub.isActive = false
       }
     } else {
       cacheEntry.subscribers.delete(instanceId)
-      
+
       if (cacheEntry.subscribers.size === 0 && !isCacheOnly) {
         queryCache.delete(currentQueryKey)
         cancelInFlightRequests()
