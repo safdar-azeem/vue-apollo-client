@@ -1,4 +1,3 @@
-
 import { App } from 'vue'
 import { provideApolloClients, ApolloClients } from '@vue/apollo-composable'
 import { VueApolloClientOptions } from './types'
@@ -26,7 +25,7 @@ export const createApollo = (options: VueApolloClientOptions) => {
       app.provide(ApolloClients, clients)
       // Provide individual clients if needed or just the map
       // @vue/apollo-composable provideApolloClients does the heavy lifting for useQuery
-      
+
       // We can also expose clients globally if needed, but provide is best.
     },
     clients,
