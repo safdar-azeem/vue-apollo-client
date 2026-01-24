@@ -1,4 +1,3 @@
-
 import { getClients } from '../configStore'
 import { provideApolloClients } from '@vue/apollo-composable'
 
