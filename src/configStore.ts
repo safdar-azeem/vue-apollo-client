@@ -1,4 +1,3 @@
-
 import { ApolloClient } from '@apollo/client/core'
 import { VueApolloClientOptions } from './types'
 
@@ -10,10 +9,12 @@ export const setGlobalConfig = (config: VueApolloClientOptions) => {
 }
 
 export const getGlobalConfig = (): VueApolloClientOptions => {
-  return globalConfig || {
+  return (
+    globalConfig || {
       endPoints: { default: 'http://localhost:4000/graphql' },
       tokenKey: 'token',
-  }
+    }
+  )
 }
 
 export const setClients = (clients: Record<string, ApolloClient<any>>) => {
