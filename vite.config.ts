@@ -18,21 +18,21 @@ export default defineConfig({
       fileName: (format, entryName) => {
         const ext = format === 'es' ? 'mjs' : 'js'
         if (entryName === 'vite') {
-             return `vite.${ext}`
+          return `vite.${ext}`
         }
         return `vue-apollo-client.${ext}`
       },
     },
     rollupOptions: {
       external: [
-          'vue', 
-          'vue-router', 
-          'graphql', 
-          '@graphql-codegen/cli', 
-          'vite', 
-          'path', 
-          'fs',
-          'module'
+        'vue',
+        'vue-router',
+        'graphql',
+        '@graphql-codegen/cli',
+        'vite',
+        'path',
+        'fs',
+        'module',
       ], // Mark node-deps external
       output: {
         globals: {
