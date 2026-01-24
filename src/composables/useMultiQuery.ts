@@ -1,4 +1,3 @@
-
 import { UseQueryOptions } from '@vue/apollo-composable' // Import base type
 import { computed } from 'vue'
 
@@ -30,7 +29,7 @@ import { computed } from 'vue'
 // Wait, the user can do: `import * as queries from './generated'; useMultiQuery(queries, ['q1', 'q2'])`
 // That seems reasonable.
 
-// Let's implement `useMultiQuery` that accepts the query map as an extra arg, OR 
+// Let's implement `useMultiQuery` that accepts the query map as an extra arg, OR
 // generic version: `useMultiQuery(definitions: Record<string, any>, keys: string[])`.
 
 // Nuxt: `useMultiQuery(queries: string[], ...)`
@@ -55,39 +54,41 @@ export function useMultiQuery(
 
   // @ts-ignore
   const data = computed(() => {
-    return results.reduce((acc, { key, result }) => {
-      // @ts-ignore
-      const rawValue = result?.value
-      if (rawValue && typeof rawValue === 'object') {
-        const keys = Object.keys(rawValue)
-        if (keys.length === 1) {
-          acc[key] = rawValue[keys[0]]
+    return results.reduce(
+      (acc, { key, result }) => {
+        // @ts-ignore
+        const rawValue = result?.value
+        if (rawValue && typeof rawValue === 'object') {
+          const keys = Object.keys(rawValue)
+          if (keys.length === 1) {
+            acc[key] = rawValue[keys[0]]
+          } else {
+            acc[key] = rawValue
+          }
         } else {
           acc[key] = rawValue
         }
-      } else {
-        acc[key] = rawValue
-      }
-      return acc
-    }, {} as Record<string, any>)
+        return acc
+      },
+      {} as Record<string, any>
+    )
   })
 
   const loading = computed(() => results.some((r) => r.loading?.value))
-   
+
   const error = computed(() => {
-    return results.reduce((acc, { key, error }) => {
-      acc[key] = error?.value ?? null
-      return acc
-    }, {} as Record<string, any>)
+    return results.reduce(
+      (acc, { key, error }) => {
+        acc[key] = error?.value ?? null
+        return acc
+      },
+      {} as Record<string, any>
+    )
   })
 
-  const refetch = async (
-    variables: Record<string, any> = {},
-    refetchKeys?: string[]
-  ) => {
-    const keysToRefetch = refetchKeys && refetchKeys.length > 0
-      ? refetchKeys
-      : results.map((r) => r.key)
+  const refetch = async (variables: Record<string, any> = {}, refetchKeys?: string[]) => {
+    const keysToRefetch =
+      refetchKeys && refetchKeys.length > 0 ? refetchKeys : results.map((r) => r.key)
 
     await Promise.all(
       results
