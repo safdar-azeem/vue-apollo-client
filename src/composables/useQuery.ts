@@ -13,13 +13,14 @@ import { useSSRQuery } from './useSSRQuery'
 
 // Extend options
 import { OperationVariables } from '@apollo/client/core'
+import { WatchQueryFetchPolicy } from '@apollo/client/core'
 
 export interface UseQueryOptions<TData = any, TVariables = OperationVariables>
    extends Omit<ApolloUseQueryOptions<TData, TVariables>, 'nextFetchPolicy'> {
    ssr?: boolean
    refetchOnUpdate?: boolean
    refetchTimeout?: number
-   nextFetchPolicy?: string | ApolloUseQueryOptions<TData, TVariables>['nextFetchPolicy']
+   nextFetchPolicy?: WatchQueryFetchPolicy | string | ApolloUseQueryOptions<TData, TVariables>['nextFetchPolicy']
 }
 
 interface QueryCacheEntry<T> {
@@ -102,6 +103,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
     options?.refetchOnUpdate !== undefined ? options.refetchOnUpdate : globalRefetchOnUpdate
 
   if (!queryRefetchOnUpdate) {
+    // @ts-ignore
     return apolloUseQuery<TResult, TVariables>(document, variables, options);
   }
 
