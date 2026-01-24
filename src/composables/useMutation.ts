@@ -1,15 +1,14 @@
-
 import {
   useMutation as apolloUseMutation,
   UseMutationReturn,
-  ApolloClients
+  ApolloClients,
 } from '@vue/apollo-composable'
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { getGlobalConfig } from '../configStore'
 import { ApolloClient, gql, OperationVariables } from '@apollo/client/core'
 
 const MUTATION_QUEUE_KEY = 'apollo_mutation_queue'
-let isSyncing = false 
+let isSyncing = false
 
 const saveMutationToQueue = (document: any, variables: any, options: any) => {
   const queue = JSON.parse(localStorage.getItem(MUTATION_QUEUE_KEY) || '[]')
@@ -30,7 +29,7 @@ const isOnline = () => {
 }
 
 const syncMutations = async (client: ApolloClient<any>) => {
-  if (isSyncing || !isOnline()) return 
+  if (isSyncing || !isOnline()) return
   isSyncing = true
 
   const queue = getMutationQueue()
@@ -72,7 +71,10 @@ const setupGlobalSync = (client: ApolloClient<any>, allowOffline: boolean) => {
   }
 }
 
-export const useMutation = <TResult = any, TVariables extends OperationVariables = OperationVariables>(
+export const useMutation = <
+  TResult = any,
+  TVariables extends OperationVariables = OperationVariables,
+>(
   document: any,
   options?: any
 ): UseMutationReturn<TResult, TVariables> => {
@@ -80,7 +82,7 @@ export const useMutation = <TResult = any, TVariables extends OperationVariables
   const clientId = options?.clientId || 'default'
   const apolloClient = clients?.[clientId]
   const config = getGlobalConfig()
-  
+
   const mutation = apolloUseMutation<TResult, TVariables>(document, options)
   const allowOffline = config?.allowOffline || false
 
@@ -94,7 +96,7 @@ export const useMutation = <TResult = any, TVariables extends OperationVariables
       } else {
         const result = await originalMutate(variables, overrideOptions)
         if (apolloClient) {
-             await syncMutations(apolloClient)
+          await syncMutations(apolloClient)
         }
         return result
       }
