@@ -36,14 +36,14 @@ import vue from '@vitejs/plugin-vue'
 import { vueApollo } from 'vue-apollo-client/vite'
 
 export default defineConfig({
-	plugins: [
-		vue(),
-		vueApollo({
-			// Optional configuration
-			// documents: 'src/**/*.graphql',
-			// schema: 'http://localhost:4000/graphql'
-		}),
-	],
+  plugins: [
+    vue(),
+    vueApollo({
+      // Optional configuration
+      // documents: 'src/**/*.graphql',
+      // schema: 'http://localhost:4000/graphql'
+    }),
+  ],
 })
 ```
 
@@ -65,12 +65,12 @@ import App from './App.vue'
 const app = createApp(App)
 
 const apollo = createApollo({
-	endPoints: {
-		default: 'http://localhost:4000/graphql',
-		// Add more endpoints as needed
-	},
-	tokenKey: 'auth_token',
-	allowOffline: true,
+  endPoints: {
+    default: 'http://localhost:4000/graphql',
+    // Add more endpoints as needed
+  },
+  tokenKey: 'auth_token',
+  allowOffline: true,
 })
 
 app.use(apollo)
@@ -94,7 +94,7 @@ const { result, loading, error, refetch } = await useMeQuery()
 </script>
 
 <template>
-	<div v-if="result">Welcome, {{ result.me.name }}!</div>
+  <div v-if="result">Welcome, {{ result.me.name }}!</div>
 </template>
 ```
 
@@ -139,14 +139,14 @@ import { useMultiQuery } from 'vue-apollo-client'
 import * as queries from './graphql/generated' // Import all generated hooks
 
 const { result, loading, error, refetch } = useMultiQuery(
-	queries,
-	['useGetUserQuery', 'useMeQuery'], // Keys must match exported names
-	{
-		/* shared variables */
-	},
-	{
-		/* options */
-	},
+  queries,
+  ['useGetUserQuery', 'useMeQuery'], // Keys must match exported names
+  {
+    /* shared variables */
+  },
+  {
+    /* options */
+  }
 )
 
 const users = result.value?.getUser
@@ -162,8 +162,8 @@ import { useDeletePostMutation } from './graphql/generated'
 const { mutate, loading, error, onDone, onError } = useDeletePostMutation()
 
 const handleDelete = async (id: string) => {
-	await mutate({ id })
-	// Handle successful deletion
+  await mutate({ id })
+  // Handle successful deletion
 }
 </script>
 ```
