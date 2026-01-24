@@ -40,17 +40,18 @@ export const setToken = (...args: [TokenParams] | [string, string?, CookieAttrib
 
   const finalOptions: CookieAttributes = { ...options, expires: EXPIRATION_MINUTES }
 
-  // Use the key. If empty, we default to 'token' or we need to know the global header.
-  const tokenKey = key || 'token' 
+  // Use the key properly by checking config
+  const tokenKey = getKey(key)
   
   Cookies.set(tokenKey, token, finalOptions)
 }
+
 export const getToken = (key = '') => {
-  const tokenKey = key || 'token'
+  const tokenKey = getKey(key)
   return Cookies.get(tokenKey)
 }
 
 export const removeToken = (key = '', options?: CookieAttributes) => {
-  const tokenKey = key || 'token'
+  const tokenKey = getKey(key)
   Cookies.remove(tokenKey, options)
 }
