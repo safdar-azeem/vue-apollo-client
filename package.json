@@ -1,6 +1,6 @@
 {
   "name": "vue-apollo-client",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Vue 3 Apollo Client with SSR, Codegen & Offline Support.",
   "author": "safdar-azeem",
   "license": "MIT",
@@ -33,11 +33,11 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "graphql": "^16.0.0",
     "vue": "^3.3.0",
     "vue-router": "^4.0.0"
   },
   "dependencies": {
+    "graphql": "^16.0.0",
     "@apollo/client": "^3.10.8",
     "@graphql-codegen/cli": "^5.0.2",
     "@graphql-codegen/typescript": "^4.0.0",
