@@ -7,10 +7,10 @@ import { ref, Ref } from 'vue'
 import { OperationVariables } from '@apollo/client/core'
 import { unwrapVariables } from '../utils/common'
 
-export interface UseLazyQueryReturn<TResult, TVariables> extends UseQueryReturn<
+export interface UseLazyQueryReturn<
   TResult,
-  TVariables
-> {
+  TVariables extends OperationVariables,
+> extends UseQueryReturn<TResult, TVariables> {
   load: (
     document?: any,
     variables?: TVariables,
