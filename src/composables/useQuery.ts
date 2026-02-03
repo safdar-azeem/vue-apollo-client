@@ -24,10 +24,10 @@ import { useSSRQuery } from './useSSRQuery'
 import { OperationVariables } from '@apollo/client/core'
 import { WatchQueryFetchPolicy } from '@apollo/client/core'
 
-export interface UseQueryOptions<TData = any, TVariables = OperationVariables> extends Omit<
-  ApolloUseQueryOptions<TData, TVariables>,
-  'nextFetchPolicy'
-> {
+export interface UseQueryOptions<
+  TData = any,
+  TVariables extends OperationVariables = OperationVariables,
+> extends Omit<ApolloUseQueryOptions<TData, TVariables>, 'nextFetchPolicy'> {
   ssr?: boolean
   refetchOnUpdate?: boolean
   refetchTimeout?: number
@@ -145,7 +145,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   let currentQueryKey = getQueryKey()
 
-  let query = useLazyQuery<TResult, TVariables>(document, reactiveVariables, options)
+  let query = useLazyQuery<TResult, TVariables>(document, reactiveVariables, options as any)
 
   if (!queryCache.has(currentQueryKey)) {
     queryCache.set(currentQueryKey, {
