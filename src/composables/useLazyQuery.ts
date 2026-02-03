@@ -5,6 +5,7 @@ import {
 } from '@vue/apollo-composable'
 import { ref, Ref } from 'vue'
 import { OperationVariables } from '@apollo/client/core'
+import { unwrapVariables } from '../utils/common'
 
 export interface UseLazyQueryReturn<TResult, TVariables> extends UseQueryReturn<
   TResult,
@@ -40,9 +41,9 @@ export const useLazyQuery = <
       if (!lazyQuery.result?.value) {
         // @ts-ignore
         await lazyQuery?.load(document, newVariables, options)
-        return lazyQuery.refetch(newVariables || variables)
+        return lazyQuery.refetch(unwrapVariables(newVariables || variables))
       } else {
-        return lazyQuery.refetch(newVariables || variables)
+        return lazyQuery.refetch(unwrapVariables(newVariables || variables))
       }
     } finally {
       loadingState.value = false
