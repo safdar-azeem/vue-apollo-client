@@ -1,13 +1,16 @@
 import createUploadLink from 'apollo-upload-client/createUploadLink.mjs'
 import {
   ApolloClient,
-  ApolloLink,
   InMemoryCache,
-  concat,
   type ApolloClientOptions,
   type InMemoryCacheConfig,
+  from,
+  fromPromise,
 } from '@apollo/client/core'
+import { onError } from '@apollo/client/link/error'
+import { setContext as setContextLink } from '@apollo/client/link/context'
 import { getToken } from '../composables/useCookies'
+import { refreshAuthToken } from './auth'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -40,29 +43,54 @@ export const graphqlConfig = ({
   apolloClientConfig,
   apolloUploadConfig,
 }: ConfigProps) => {
-  const authLink = new ApolloLink((operation, forward) => {
+  const authLink = setContextLink((operation, prevContext) => {
     const token = getToken(tokenKey)
     const context = setContext?.({
-      operationName: operation?.operationName,
+      operationName: operation?.operationName || '',
       variables: operation?.variables,
       token: token || '',
     })
 
-    operation.setContext({
+    return {
       ...context,
       headers: {
         authorization: token ? `${token}` : '',
         ...context?.headers,
+        ...prevContext?.headers,
       },
-    })
+    }
+  })
 
-    return forward(operation)
+  const errorLink = onError(({ graphQLErrors, operation, forward }) => {
+    if (graphQLErrors) {
+      for (const err of graphQLErrors) {
+        if (err.extensions?.code === 'UNAUTHENTICATED' || err.message === 'Unauthorized') {
+          return fromPromise(
+            refreshAuthToken().catch((error) => {
+              // If refresh fails, we can't retry
+              return
+            })
+          )
+            .filter((value) => Boolean(value))
+            .flatMap((accessToken) => {
+              const oldHeaders = operation.getContext().headers
+              operation.setContext({
+                headers: {
+                  ...oldHeaders,
+                  authorization: `${accessToken}`,
+                },
+              })
+              return forward(operation)
+            })
+        }
+      }
+    }
   })
 
   const clients: Record<string, ApolloClient<any>> = {}
 
   for (const [key, endpoint] of Object.entries(endPoints)) {
-    const link = createUploadLink({
+    const httpLink = createUploadLink({
       uri: endpoint,
       ...apolloUploadConfig,
       useGETForQueries: useGETForQueries || apolloUploadConfig?.useGETForQueries,
@@ -74,16 +102,16 @@ export const graphqlConfig = ({
     clients[key] = new ApolloClient({
       ...(memoryConfig
         ? {
-            ...config,
             cache: new InMemoryCache(memoryConfig),
+            ...config,
           }
         : {
             cache: new InMemoryCache(),
             ...config,
           }),
       // @ts-ignore
-      link: concat(authLink, link),
-      ssrMode: typeof window === 'undefined', // Simple SSR detection
+      link: from([errorLink, authLink, httpLink]),
+      ssrMode: typeof window === 'undefined',
     })
   }
 
