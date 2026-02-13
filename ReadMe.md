@@ -190,11 +190,32 @@ Pass these options to `createApollo()`:
 
 | Function           | Description                                                   | Syntax                                                           |
 | ------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------- |
-| setToken           | Sets the token in the cookie                                  | `setToken(token)` or `setToken(token, key?, options?)`           |
+| setToken           | Sets the token and refresh token in the cookie                | `setToken(token)` or `setToken({ token, refreshToken })`         |
 | getToken           | Gets the token from the cookie                                | `getToken(key?)`                                                 |
-| removeToken        | Removes the token from the cookie                             | `removeToken(key?, options?)`                                    |
+| getRefreshToken    | Gets the refresh token from the cookie                        | `getRefreshToken(key?)`                                          |
+| removeToken        | Removes the token and refresh token from the cookie           | `removeToken(key?, options?)`                                    |
 | loadApolloClients  | Initializes Apollo Clients for use outside components         | `loadApolloClients()`                                            |
 | useKeepCookieAlive | Keeps the auth token cookie alive by updating it periodically | `useKeepCookieAlive(debounceMs?: number)` (defaults to 10000 ms) |
+
+### Refresh Token Support
+
+The client automatically handles `UNAUTHENTICATED` (401) errors. If a request fails with a 401, it attempts to refresh the token using the stored refresh token.
+
+1. It calls a `refreshToken` mutation on your backend.
+2. If successful, it updates the cookies and retries the original request.
+3. If valid tokens are not returned, it logs the user out.
+
+To enable this, ensure your login flow saves the refresh token:
+
+```typescript
+import { setToken } from 'vue-apollo-client'
+
+// On login success
+setToken({
+  token: 'new-access-token',
+  refreshToken: 'new-refresh-token',
+})
+```
 
 ### Cookie Management & Security
 
