@@ -15,6 +15,8 @@ export const createApollo = (options: VueApolloClientOptions) => {
     useGETForQueries: options.useGETForQueries,
     apolloClientConfig: options.apolloClientConfig,
     apolloUploadConfig: options.apolloUploadConfig,
+    refreshToken: options.refreshToken,
+    onLogout: options.onLogout,
   })
 
   setClients(clients)
