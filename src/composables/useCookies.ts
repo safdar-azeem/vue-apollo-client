@@ -11,7 +11,7 @@ export interface CookieAttributes {
   [property: string]: any
 }
 
-type TokenParams = {
+export type TokenParams = {
   key?: string
   token: string
   refreshToken?: string
