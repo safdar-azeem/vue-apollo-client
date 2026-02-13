@@ -92,7 +92,31 @@ app.mount('#app')
 
 Use auto-generated composables in your Vue component.
 
-### Server-side Query (SSR)
+### 1. Define a query
+
+```graphql
+# src/graphql/user.query.graphql
+query GetUser {
+  me {
+    id
+    name
+  }
+}
+```
+
+### 2. Client-side Query
+
+For standard client-side fetching:
+
+```vue
+<script setup>
+import { useMeQuery } from './graphql/generated'
+
+const { result, loading, error, refetch } = useMeQuery()
+</script>
+```
+
+### 3. Server-side Query (SSR)
 
 If you are using this with SSR (e.g. `vite-ssr` or custom setup), you can await the query to fetch data on the server.
 
@@ -107,18 +131,6 @@ const { result, loading, error, refetch } = await useMeQuery()
 <template>
   <div v-if="result">Welcome, {{ result.me.name }}!</div>
 </template>
-```
-
-### Client-side Query
-
-For standard client-side fetching:
-
-```vue
-<script setup>
-import { useMeQuery } from './graphql/generated'
-
-const { result, loading, error, refetch } = useMeQuery()
-</script>
 ```
 
 ### Different Apollo Clients
