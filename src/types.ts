@@ -12,6 +12,8 @@ export interface VueApolloClientOptions {
   refetchOnUpdate?: boolean
   refetchTimeout?: number
   allowOffline?: boolean
+  refreshToken?: () => Promise<string | void | null>
+  onLogout?: () => void
   setContext?: (context: {
     operationName?: string
     variables?: any
