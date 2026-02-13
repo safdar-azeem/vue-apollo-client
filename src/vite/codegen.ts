@@ -7,10 +7,22 @@ const require = createRequire(import.meta.url)
 
 export const runCodegen = async (options: VueApolloViteOptions, rootDir: string) => {
   const schema = options.schema || 'http://localhost:4000/graphql'
-  const documents = options.documents || 'src/**/*.{graphql,gql,ts}'
-  const output = options.output
-    ? path.resolve(rootDir, options.output)
-    : path.resolve(rootDir, 'src/graphql/generated.ts')
+  
+  // Resolve the output path
+  const outputRelative = options.output || 'src/graphql/generated.ts'
+  const output = path.resolve(rootDir, outputRelative)
+
+  // Normalize documents to an array
+  let documents = options.documents || ['src/**/*.{graphql,gql,ts}']
+  if (typeof documents === 'string') {
+    documents = [documents]
+  }
+
+  // CRITICAL FIX: Exclude the output file from the documents list
+  // This prevents the "Not all operations have an unique name" error
+  // by ensuring the generator doesn't read its own output as an input source.
+  const relativeOutputPath = path.relative(rootDir, output).split(path.sep).join('/')
+  documents.push(`!${relativeOutputPath}`)
 
   try {
     const config = {
@@ -24,7 +36,7 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
             require.resolve('@graphql-codegen/typescript-vue-apollo'),
           ],
           config: {
-            // CRITICAL: Point to this library for composables
+            // Point to this library for composables
             vueApolloComposableImportFrom: 'vue-apollo-client',
             vueCompositionApiImportFrom: 'vue',
             // Default configs
@@ -45,3 +57,4 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
     console.error('[vue-apollo] Codegen failed:', error)
   }
 }
+
