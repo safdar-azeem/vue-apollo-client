@@ -1,9 +1,6 @@
-import {
-  useLazyQuery as apolloUseLazyQuery,
-  UseQueryReturn,
-  UseQueryOptions,
-} from '@vue/apollo-composable'
-import { ref, Ref } from 'vue'
+import { useLazyQuery as apolloUseLazyQuery, UseQueryReturn } from '@vue/apollo-composable'
+import { UseQueryOptions } from './useQuery'
+import { ref, Ref, unref } from 'vue'
 import { OperationVariables } from '@apollo/client/core'
 import { unwrapVariables } from '../utils/common'
 
@@ -23,12 +20,18 @@ export const useLazyQuery = <
   TVariables extends OperationVariables = OperationVariables,
 >(
   document: any,
-  variables?: TVariables | (() => TVariables),
-  options?: UseQueryOptions<TResult, TVariables>
+  variables?: TVariables | (() => TVariables) | Ref<TVariables>,
+  options?:
+    | UseQueryOptions<TResult, TVariables>
+    | Ref<UseQueryOptions<TResult, TVariables>>
+    | (() => UseQueryOptions<TResult, TVariables>)
 ): UseLazyQueryReturn<TResult, TVariables> => {
-  const lazyQuery = apolloUseLazyQuery(document, variables, {
-    fetchPolicy: 'cache-and-network',
-    ...options,
+  const lazyQuery = apolloUseLazyQuery(document, variables, () => {
+    const opt = typeof options === 'function' ? options() : unref(options)
+    return {
+      fetchPolicy: 'cache-and-network',
+      ...(opt as any),
+    }
   }) as any
 
   // Always keep loading as false after initial fetch
