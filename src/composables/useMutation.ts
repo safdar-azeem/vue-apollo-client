@@ -2,7 +2,9 @@ import {
   useMutation as apolloUseMutation,
   UseMutationReturn,
   ApolloClients,
+  UseMutationOptions,
 } from '@vue/apollo-composable'
+export type { UseMutationOptions, UseMutationReturn } from '@vue/apollo-composable'
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { getGlobalConfig } from '../configStore'
 import { ApolloClient, gql, OperationVariables } from '@apollo/client/core'
