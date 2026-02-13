@@ -14,6 +14,7 @@ export interface CookieAttributes {
 type TokenParams = {
   key?: string
   token: string
+  refreshToken?: string
   options?: CookieAttributes
 }
 
@@ -27,6 +28,7 @@ export const setToken = (
 ): void => {
   let key = ''
   let token = ''
+  let refreshToken = ''
   let options: CookieAttributes = {}
 
   if (typeof args[0] === 'object' && args[0] !== null) {
@@ -34,25 +36,17 @@ export const setToken = (
     const params = args[0] as TokenParams
     key = params.key || ''
     token = params.token
+    refreshToken = params.refreshToken || ''
     options = params.options || {}
   } else if (args.length === 1 && typeof args[0] === 'string') {
     // Case 2: setToken(token) -> Use default key
     token = args[0]
   } else if (args.length > 1) {
-    // Case 3: setToken(token, key, options) (Original signature was weird (key, token) but widely used as (token)?)
-
-    // The original code had: args[0] is token (if not object).
-    // args[1] is key.
-
-    // Let's verify existing usage.
-    // Current impl:
-    // token: args[0], key: args[1] || '', options: args[2] || {}
-
+    // Case 3: setToken(token, key, options)
     token = args[0] as string
     key = (args[1] as string) || ''
     options = (args[2] as CookieAttributes) || {}
   } else if (args.length === 1 && args[0] === undefined) {
-    // Case: setToken(undefined) calling
     return
   }
 
@@ -73,8 +67,12 @@ export const setToken = (
 
   // Use the key properly by checking config
   const tokenKey = getKey(key)
-
   Cookies.set(tokenKey, token, finalOptions)
+
+  if (refreshToken) {
+    const refreshTokenKey = `${tokenKey}_refresh`
+    Cookies.set(refreshTokenKey, refreshToken, finalOptions)
+  }
 }
 
 export const getToken = (key = '') => {
@@ -82,9 +80,15 @@ export const getToken = (key = '') => {
   return Cookies.get(tokenKey)
 }
 
+export const getRefreshToken = (key = '') => {
+  const tokenKey = getKey(key)
+  return Cookies.get(`${tokenKey}_refresh`)
+}
+
 export const removeToken = (key = '', options?: CookieAttributes) => {
   const tokenKey = getKey(key)
   Cookies.remove(tokenKey, options)
+  Cookies.remove(`${tokenKey}_refresh`, options)
 }
 
 const ACTIVITY_EVENTS = ['click', 'mousemove', 'keydown', 'scroll']
