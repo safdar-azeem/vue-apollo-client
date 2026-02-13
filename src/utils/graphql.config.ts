@@ -10,7 +10,6 @@ import {
 import { onError } from '@apollo/client/link/error'
 import { setContext as setContextLink } from '@apollo/client/link/context'
 import { getToken } from '../composables/useCookies'
-import { refreshAuthToken } from './auth'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -32,6 +31,23 @@ interface ConfigProps {
   useGETForQueries?: boolean
   apolloClientConfig?: Partial<ApolloClientOptions<any>> | null
   apolloUploadConfig?: ApolloUploadConfig
+  refreshToken?: () => Promise<string | void | null>
+  onLogout?: () => void
+}
+
+let isRefreshing = false
+let failedQueue: any[] = []
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error)
+    } else {
+      prom.resolve(token)
+    }
+  })
+
+  failedQueue = []
 }
 
 export const graphqlConfig = ({
@@ -42,6 +58,8 @@ export const graphqlConfig = ({
   useGETForQueries,
   apolloClientConfig,
   apolloUploadConfig,
+  refreshToken,
+  onLogout,
 }: ConfigProps) => {
   const authLink = setContextLink((operation, prevContext) => {
     const token = getToken(tokenKey)
@@ -64,12 +82,48 @@ export const graphqlConfig = ({
   const errorLink = onError(({ graphQLErrors, operation, forward }) => {
     if (graphQLErrors) {
       for (const err of graphQLErrors) {
-        if (err.extensions?.code === 'UNAUTHENTICATED' || err.message === 'Unauthorized') {
+        if (
+          (err.extensions?.code === 'UNAUTHENTICATED' || err.message === 'Unauthorized') &&
+          refreshToken
+        ) {
+          if (isRefreshing) {
+            return fromPromise(
+              new Promise((resolve, reject) => {
+                failedQueue.push({ resolve, reject })
+              })
+            )
+              .filter((value) => Boolean(value))
+              .flatMap((accessToken) => {
+                const oldHeaders = operation.getContext().headers
+                operation.setContext({
+                  headers: {
+                    ...oldHeaders,
+                    authorization: `${accessToken}`,
+                  },
+                })
+                return forward(operation)
+              })
+          }
+
+          isRefreshing = true
+
           return fromPromise(
-            refreshAuthToken().catch((error) => {
-              // If refresh fails, we can't retry
-              return
-            })
+            refreshToken()
+              .then((newToken) => {
+                if (newToken) {
+                  processQueue(null, newToken as string)
+                  return newToken
+                }
+                throw new Error('Refresh failed')
+              })
+              .catch((error) => {
+                processQueue(error, null)
+                onLogout?.()
+                return
+              })
+              .finally(() => {
+                isRefreshing = false
+              })
           )
             .filter((value) => Boolean(value))
             .flatMap((accessToken) => {
