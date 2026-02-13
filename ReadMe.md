@@ -1,6 +1,6 @@
 # Vue Apollo Client
 
-A Vue 3 Apollo Client featuring smart queries with caching and refetching, SSR support, offline mutations, and **zero-config code generation**.
+A Vue 3, Vite, Nuxt 3 Apollo Client featuring smart queries with caching and refetching, SSR support, offline mutations, and **zero-config code generation**.
 
 ## Features
 
@@ -13,15 +13,22 @@ A Vue 3 Apollo Client featuring smart queries with caching and refetching, SSR s
 - Automatic token management
 - Automatic type generation for queries and mutations
 - Auto-imports for generated composables and types
+- Authentication support with cookie, token, and refresh token
 - Production-ready 📦
 
 ## Installation
 
 ```bash
-npm install vue-apollo-client @apollo/client graphql vue-router @vue/apollo-composable
+npm install vue-apollo-client
 # or
-yarn add vue-apollo-client @apollo/client graphql vue-router @vue/apollo-composable
+yarn add vue-apollo-client
 ```
+
+### Everything is set up for you: 🚀
+
+- No need to install Apollo Client or GraphQL codegen packages
+- All necessary dependencies will be automatically handled
+- Apollo Client configuration is done for you
 
 ## Setup
 
@@ -41,6 +48,7 @@ export default defineConfig({
     vueApollo({
       // Optional configuration
       // documents: 'src/**/*.graphql',
+      // schema?: string | string[]
       // schema: 'http://localhost:4000/graphql'
     }),
   ],
@@ -68,6 +76,9 @@ const apollo = createApollo({
   endPoints: {
     default: 'http://localhost:4000/graphql',
     // Add more endpoints as needed
+    // Example:
+    // api2: 'http://localhost:3000/graphql',
+    // const { result, loading, error, refetch } = useMeQuery({ client: 'api2' });
   },
   tokenKey: 'auth_token',
   allowOffline: true,
@@ -107,6 +118,19 @@ For standard client-side fetching:
 import { useMeQuery } from './graphql/generated'
 
 const { result, loading, error, refetch } = useMeQuery()
+</script>
+```
+
+### Different Apollo Clients
+
+You can use different Apollo Clients for different queries.
+
+```vue
+<script setup>
+// with default client
+const { result, loading, error, refetch } = useMeQuery()
+// with api2 client
+const { result, loading, error, refetch } = useMeQuery({ client: 'api2' })
 </script>
 ```
 
