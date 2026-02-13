@@ -3,6 +3,7 @@ import {
   UseQueryReturn,
   UseQueryOptions as ApolloUseQueryOptions,
 } from '@vue/apollo-composable'
+export type { UseQueryReturn } from '@vue/apollo-composable'
 import {
   getCurrentInstance,
   onMounted,
@@ -13,6 +14,7 @@ import {
   ref,
   unref,
   toRaw,
+  Ref,
 } from 'vue'
 import { useRoute } from 'vue-router'
 import { getGlobalConfig } from '../configStore'
@@ -98,10 +100,15 @@ if (!isServer) {
 
 export const useQuery = <TResult = any, TVariables extends OperationVariables = OperationVariables>(
   document: any,
-  variables?: TVariables | (() => TVariables),
-  options?: UseQueryOptions<TResult, TVariables>
+  variables?: TVariables | (() => TVariables) | Ref<TVariables>,
+  options?:
+    | UseQueryOptions<TResult, TVariables>
+    | Ref<UseQueryOptions<TResult, TVariables>>
+    | (() => UseQueryOptions<TResult, TVariables>)
 ): UseQueryReturn<TResult, TVariables> => {
-  if (isServer || options?.ssr) {
+  const opts = typeof options === 'function' ? options() : unref(options) || {}
+
+  if (isServer || opts.ssr) {
     // This returns a promise-like structure in Nuxt impl, but composables must return synchronous objects.
     // The Nuxt impl of useSSRQuery is async.
     // If usage is `await useQuery(...)` it works.
@@ -115,7 +122,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   const globalRefetchOnUpdate = config?.refetchOnUpdate
   const queryRefetchOnUpdate =
-    options?.refetchOnUpdate !== undefined ? options.refetchOnUpdate : globalRefetchOnUpdate
+    opts.refetchOnUpdate !== undefined ? opts.refetchOnUpdate : globalRefetchOnUpdate
 
   if (!queryRefetchOnUpdate) {
     // @ts-ignore
@@ -123,7 +130,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
   }
 
   const reactiveVariables = reactive(
-    typeof variables === 'function' ? variables() : variables || ({} as any)
+    typeof variables === 'function' ? variables() : unref(variables) || ({} as any)
   )
 
   const instance = getCurrentInstance()
@@ -140,8 +147,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
     })
   }
 
-  const isCacheOnly =
-    options?.nextFetchPolicy === 'cache-only' || options?.fetchPolicy === 'cache-only'
+  const isCacheOnly = opts.nextFetchPolicy === 'cache-only' || opts.fetchPolicy === 'cache-only'
 
   let currentQueryKey = getQueryKey()
 
@@ -187,7 +193,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
   }
 
   const getRefetchTimeout = () => {
-    return options?.refetchTimeout || config?.refetchTimeout || DEFAULT_REFETCH_TIMEOUT
+    return opts.refetchTimeout || config?.refetchTimeout || DEFAULT_REFETCH_TIMEOUT
   }
 
   const cancelInFlightRequests = () => {
