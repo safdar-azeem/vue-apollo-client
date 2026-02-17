@@ -96,11 +96,19 @@ export const useMutation = <
         saveMutationToQueue(document, variables, { ...options, ...overrideOptions })
         return { data: null, loading: ref(false), error: ref(null) } as any
       } else {
-        const result = await originalMutate(variables, overrideOptions)
-        if (apolloClient) {
-          await syncMutations(apolloClient)
+        try {
+          const result = await originalMutate(variables, overrideOptions)
+          if (apolloClient) {
+            await syncMutations(apolloClient)
+          }
+          return result
+        } catch (error) {
+          // Fix sticky loading state on error
+          if (mutation.loading.value) {
+            mutation.loading.value = false
+          }
+          throw error
         }
-        return result
       }
     }
 
@@ -121,3 +129,4 @@ export const useMutation = <
 
   return mutation
 }
+
