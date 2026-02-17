@@ -82,9 +82,16 @@ export const graphqlConfig = ({
   const errorLink = onError(({ graphQLErrors, operation, forward }) => {
     if (graphQLErrors) {
       for (const err of graphQLErrors) {
+        // SYSTEM DESIGN FIX:
+        // Only attempt to refresh if we actually have a token locally.
+        // If we don't have a token, it means we are logging in (or public user),
+        // so a 401 is just a standard error (wrong password, etc).
+        const currentToken = getToken(tokenKey)
+
         if (
           (err.extensions?.code === 'UNAUTHENTICATED' || err.message === 'Unauthorized') &&
-          refreshToken
+          refreshToken &&
+          currentToken // <--- CRITICAL CHECK
         ) {
           if (isRefreshing) {
             return fromPromise(
@@ -119,6 +126,7 @@ export const graphqlConfig = ({
               .catch((error) => {
                 processQueue(error, null)
                 onLogout?.()
+                // Return undefined so the original error bubbles up if refresh fails
                 return
               })
               .finally(() => {
@@ -171,3 +179,4 @@ export const graphqlConfig = ({
 
   return clients
 }
+
