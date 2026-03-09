@@ -9,7 +9,7 @@ import {
 } from '@apollo/client/core'
 import { onError } from '@apollo/client/link/error'
 import { setContext as setContextLink } from '@apollo/client/link/context'
-import { getToken } from '../composables/useCookies'
+import { getToken, stashToken, restoreStashedToken } from '../composables/useCookies'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -61,6 +61,11 @@ export const graphqlConfig = ({
   refreshToken,
   onLogout,
 }: ConfigProps) => {
+  // Automatically restore token if it was temporarily stashed due to network unreachable errors
+  if (typeof window !== 'undefined') {
+    restoreStashedToken(tokenKey)
+  }
+
   const authLink = setContextLink((operation, prevContext) => {
     const token = getToken(tokenKey)
     const context = setContext?.({
@@ -79,7 +84,27 @@ export const graphqlConfig = ({
     }
   })
 
-  const errorLink = onError(({ graphQLErrors, operation, forward }) => {
+  const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {
+    // Handle Network Errors (Server Unreachable / Connection Refused)
+    if (networkError) {
+      const isUnreachable =
+        networkError.message.includes('Failed to fetch') ||
+        networkError.message.includes('NetworkError') ||
+        networkError.message.includes('ECONNREFUSED') ||
+        ('statusCode' in networkError && (networkError as any).statusCode === 0) ||
+        ('statusCode' in networkError && (networkError as any).statusCode >= 500)
+
+      if (isUnreachable) {
+        const currentToken = getToken(tokenKey)
+        if (currentToken) {
+          // Stash the token temporarily and clear main auth
+          // so the auth guard redirects user to login until server recovers.
+          stashToken(tokenKey)
+          onLogout?.()
+        }
+      }
+    }
+
     if (graphQLErrors) {
       for (const err of graphQLErrors) {
         // SYSTEM DESIGN FIX:
