@@ -9,7 +9,7 @@ import {
 } from '@apollo/client/core'
 import { onError } from '@apollo/client/link/error'
 import { setContext as setContextLink } from '@apollo/client/link/context'
-import { getToken, stashToken, restoreStashedToken } from '../composables/useCookies'
+import { getToken, stashToken, restoreStashedToken, removeToken } from '../composables/useCookies'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -146,10 +146,14 @@ export const graphqlConfig = ({
                   processQueue(null, newToken as string)
                   return newToken
                 }
-                throw new Error('Refresh failed')
+                // If refreshToken returns null or void, force a throw to trigger the catch block
+                throw new Error('Refresh failed or returned null')
               })
               .catch((error) => {
                 processQueue(error, null)
+                // Explicitly remove tokens to clear all local auth state
+                removeToken(tokenKey)
+                // Trigger the user's logout callback to clear external state
                 onLogout?.()
                 // Return undefined so the original error bubbles up if refresh fails
                 return
