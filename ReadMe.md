@@ -30,6 +30,12 @@ yarn add vue-apollo-client
 - All necessary dependencies will be automatically handled
 - Apollo Client configuration is done for you
 
+---
+
+> Don't forget to follow me on [GitHub](https://github.com/safdar-azeem)!
+
+---
+
 ## Setup
 
 ### 1. Vite Plugin
@@ -252,6 +258,30 @@ setToken({
   refreshToken: 'new-refresh-token',
 })
 ```
+
+---
+
+### Automatic Token Refresh
+
+If your API returns a `UNAUTHENTICATED` error, the client can attempt to refresh the token:
+
+```typescript
+const apollo = createApollo({
+  endPoints: { default: '...' },
+  refreshToken: async () => {
+    // Logic to call your refresh endpoint
+    const response = await fetch('/auth/refresh')
+    const data = await response.json()
+    return data.accessToken // Return the new token
+  },
+  onLogout: () => {
+    // Redirect to login page
+    window.location.href = '/login'
+  },
+})
+```
+
+---
 
 ### Cookie Management & Security
 
