@@ -91,6 +91,44 @@ export const removeToken = (key = '', options?: CookieAttributes) => {
   Cookies.remove(`${tokenKey}_refresh`, options)
 }
 
+export const stashToken = (key = '', options?: CookieAttributes) => {
+  const tokenKey = getKey(key)
+  const token = Cookies.get(tokenKey)
+  const refresh = Cookies.get(`${tokenKey}_refresh`)
+
+  if (token) {
+    const config = getGlobalConfig()
+    const EXPIRATION_MINUTES =
+      options?.expires || config?.tokenExpiration || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+
+    const finalOptions: CookieAttributes = {
+      path: '/',
+      secure: true,
+      sameSite: 'None',
+      ...options,
+      expires: EXPIRATION_MINUTES,
+    }
+
+    Cookies.set(`temp_${tokenKey}`, token, finalOptions)
+    if (refresh) {
+      Cookies.set(`temp_${tokenKey}_refresh`, refresh, finalOptions)
+    }
+    removeToken(key, options)
+  }
+}
+
+export const restoreStashedToken = (key = '', options?: CookieAttributes) => {
+  const tokenKey = getKey(key)
+  const tempToken = Cookies.get(`temp_${tokenKey}`)
+  const tempRefresh = Cookies.get(`temp_${tokenKey}_refresh`)
+
+  if (tempToken) {
+    setToken({ key, token: tempToken, refreshToken: tempRefresh || '', options })
+    Cookies.remove(`temp_${tokenKey}`, options || { path: '/' })
+    Cookies.remove(`temp_${tokenKey}_refresh`, options || { path: '/' })
+  }
+}
+
 const ACTIVITY_EVENTS = ['click', 'mousemove', 'keydown', 'scroll']
 
 export const useKeepCookieAlive = (debounceInterval = 10000) => {
@@ -147,3 +185,4 @@ export const useKeepCookieAlive = (debounceInterval = 10000) => {
     }
   })
 }
+
