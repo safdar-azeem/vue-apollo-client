@@ -73,6 +73,54 @@ const setupGlobalSync = (client: ApolloClient<any>, allowOffline: boolean) => {
   }
 }
 
+/**
+ * For every string query name in refetchQueries:
+ * 1. Try to refetch all active matching observable queries directly.
+ * 2. Always evict the field from Apollo InMemoryCache — so if the query
+ *    component is unmounted (stopped observable), it fetches fresh on next mount.
+ */
+const handleRefetchQueries = async (client: ApolloClient<any>, refetchQueries: any[]) => {
+  const stringQueries = refetchQueries.filter((q) => typeof q === 'string')
+  if (stringQueries.length === 0) return
+
+  for (const opName of stringQueries) {
+    // Step 1: evict from Apollo cache so unmounted queries fetch fresh on remount
+    // Try both the exact casing and camelCase first-letter variant
+    const fieldName = opName.charAt(0).toLowerCase() + opName.slice(1)
+    const variants = [...new Set([opName, fieldName])]
+
+    for (const field of variants) {
+      try {
+        client.cache.evict({ id: 'ROOT_QUERY', fieldName: field })
+      } catch (_) {}
+    }
+    client.cache.gc()
+
+    // Step 2: refetch any currently active observable queries with this name
+    const queryManager = (client as any).queryManager
+    if (!queryManager) continue
+
+    const queries: Map<string, any> = queryManager.queries
+    const refetchPromises: Promise<any>[] = []
+
+    queries.forEach((queryInfo: any) => {
+      const oq = queryInfo.observableQuery
+      if (!oq || queryInfo.stopped) return
+
+      const name: string | undefined =
+        oq.queryName || queryInfo.document?.definitions?.[0]?.name?.value
+
+      if (name === opName && oq.observers?.size > 0) {
+        refetchPromises.push(oq.refetch())
+      }
+    })
+
+    if (refetchPromises.length > 0) {
+      await Promise.allSettled(refetchPromises)
+    }
+  }
+}
+
 export const useMutation = <
   TResult = any,
   TVariables extends OperationVariables = OperationVariables,
@@ -88,31 +136,41 @@ export const useMutation = <
   const mutation = apolloUseMutation<TResult, TVariables>(document, options)
   const allowOffline = config?.allowOffline || false
 
-  if (allowOffline && typeof window !== 'undefined') {
-    const originalMutate = mutation.mutate
-    // @ts-ignore
-    mutation.mutate = async (variables?: TVariables, overrideOptions?: any) => {
-      if (!isOnline()) {
-        saveMutationToQueue(document, variables, { ...options, ...overrideOptions })
-        return { data: null, loading: ref(false), error: ref(null) } as any
-      } else {
-        try {
-          const result = await originalMutate(variables, overrideOptions)
-          if (apolloClient) {
-            await syncMutations(apolloClient)
-          }
-          return result
-        } catch (error) {
-          // Fix sticky loading state on error
-          if (mutation.loading.value) {
-            mutation.loading.value = false
-          }
-          throw error
-        }
-      }
+  const originalMutate = mutation.mutate
+
+  // @ts-ignore
+  mutation.mutate = async (variables?: TVariables, overrideOptions?: any) => {
+    const mergedRefetchQueries: any[] =
+      overrideOptions?.refetchQueries ?? options?.refetchQueries ?? []
+
+    if (allowOffline && typeof window !== 'undefined' && !isOnline()) {
+      saveMutationToQueue(document, variables, { ...options, ...overrideOptions })
+      return { data: null, loading: ref(false), error: ref(null) } as any
     }
 
-    let cleanup: (() => void) | undefined
+    try {
+      const result = await originalMutate(variables, overrideOptions)
+
+      if (apolloClient && mergedRefetchQueries.length > 0) {
+        await handleRefetchQueries(apolloClient, mergedRefetchQueries)
+      }
+
+      if (allowOffline && apolloClient) {
+        await syncMutations(apolloClient)
+      }
+
+      return result
+    } catch (error) {
+      if (mutation.loading.value) {
+        mutation.loading.value = false
+      }
+      throw error
+    }
+  }
+
+  let cleanup: (() => void) | undefined
+
+  if (allowOffline && typeof window !== 'undefined') {
     onMounted(() => {
       if (!cleanup && apolloClient) {
         cleanup = setupGlobalSync(apolloClient, allowOffline)
@@ -129,4 +187,3 @@ export const useMutation = <
 
   return mutation
 }
-
