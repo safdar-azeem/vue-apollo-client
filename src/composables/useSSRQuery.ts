@@ -2,6 +2,8 @@ import { ref } from 'vue'
 import { inject } from 'vue'
 import { ApolloClients } from '@vue/apollo-composable'
 import { ApolloClient } from '@apollo/client/core'
+import { getClients } from '../configStore'
+import { provideApolloClients } from '@vue/apollo-composable'
 
 const defaultResult = () => {
   const result = ref(null)
@@ -27,12 +29,23 @@ const defaultResult = () => {
 }
 
 export const useSSRQuery = async (document: any, variables: any, options: any) => {
-  const clients = inject(ApolloClients) as Record<string, ApolloClient<any>>
   const clientId = options?.clientId || 'default'
+
+  // Try inject first (inside component), fallback to global store (outside component)
+  let clients = inject(ApolloClients, null) as Record<string, ApolloClient<any>> | null
+  if (!clients) {
+    const globalClients = getClients()
+    if (globalClients) {
+      // Ensure provideApolloClients is called so @vue/apollo-composable works too
+      provideApolloClients(globalClients)
+      clients = globalClients
+    }
+  }
+
   const apolloClient = clients?.[clientId]
 
   if (!apolloClient) {
-    console.error(`Apollo client ${clientId} not found.`)
+    console.error(`Apollo client "${clientId}" not found. Make sure loadApolloClients() is called before using queries outside components.`)
     return defaultResult()
   }
 
