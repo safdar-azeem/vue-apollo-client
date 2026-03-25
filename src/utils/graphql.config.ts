@@ -87,6 +87,22 @@ export const graphqlConfig = ({
   const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {
     // Handle Network Errors (Server Unreachable / Connection Refused)
     if (networkError) {
+      const statusCode = (networkError as any)?.statusCode ?? (networkError as any)?.result?.status
+
+      // CRITICAL FIX: 401/403 means token is invalid — do NOT retry/forward.
+      // Returning undefined here stops Apollo from retrying the operation,
+      // which is what caused the infinite request loop.
+      if (statusCode === 401 || statusCode === 403) {
+        const currentToken = getToken(tokenKey)
+        if (currentToken) {
+          removeToken(tokenKey)
+          onLogout?.()
+        }
+        // Return nothing — this terminates the link chain and lets the
+        // error propagate to the caller (.catch() in verifyAuthWithBackend)
+        return
+      }
+
       const isUnreachable =
         networkError.message.includes('Failed to fetch') ||
         networkError.message.includes('NetworkError') ||
@@ -208,4 +224,3 @@ export const graphqlConfig = ({
 
   return clients
 }
-
