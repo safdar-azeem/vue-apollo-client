@@ -104,7 +104,8 @@ const _navigate = async (path: string): Promise<void> => {
 
 	// 2. Dynamic import of @/router (Vite alias)
 	try {
-		const mod: any = await import(/* @vite-ignore */ '@/router').catch(() => null)
+		const routerPath = '@/router'
+		const mod: any = await import(/* @vite-ignore */ routerPath).catch(() => null)
 		const r = mod?.default?.push ? mod.default : mod?.router?.push ? mod.router : null
 		if (r) {
 			await r.push(path)
