@@ -1,6 +1,6 @@
 # Vue Apollo Client
 
-A Vue 3, Vite, Nuxt 3 Apollo Client featuring smart queries with caching and refetching, SSR support, offline mutations, and **zero-config code generation**.
+A Vue 3, Vite, Nuxt 3 Apollo Client featuring smart queries with caching and refetching, SSR support, offline mutations, **zero-config code generation**, and **built-in auth lifecycle**.
 
 ## Features
 
@@ -11,6 +11,8 @@ A Vue 3, Vite, Nuxt 3 Apollo Client featuring smart queries with caching and ref
 - Multiple client support
 - File Upload support
 - Automatic token management
+- **Built-in auth composable** — `useAuth({ meQuery })` handles the full session lifecycle (verify / logout / auto SPA-navigate on auth failure)
+- **Auto-detected cookie options** — `setToken` / `removeToken` pick the right `secure` / `sameSite` / `domain` for the current environment
 - Automatic type generation for queries and mutations
 - Auto-imports for generated composables and types
 - Authentication support with cookie, token, and refresh token
@@ -29,6 +31,8 @@ yarn add vue-apollo-client
 - No need to install Apollo Client or GraphQL codegen packages
 - All necessary dependencies will be automatically handled
 - Apollo Client configuration is done for you
+- Cookie attributes (domain, secure, sameSite) are auto-detected
+- Auth flow (verify / logout / session expiry) is built in
 
 ---
 
@@ -69,12 +73,13 @@ Now, just run `npm run dev`. The plugin will:
 
 ### 2. App Initialization
 
-In your main entry file (e.g., `main.ts`), initialize the Apollo client:
+In your main entry file (e.g., `main.ts`), initialize the Apollo client and register the router so `useAuth` can do SPA navigation on logout:
 
 ```typescript
 import { createApp } from 'vue'
-import { createApollo } from 'vue-apollo-client'
+import { createApollo, setAuthRouter } from 'vue-apollo-client'
 import App from './App.vue'
+import router from './router'
 
 const app = createApp(App)
 
@@ -82,21 +87,83 @@ const apollo = createApollo({
   endPoints: {
     default: 'http://localhost:4000/graphql',
     // Add more endpoints as needed
-    // Example:
     // api2: 'http://localhost:3000/graphql',
     // const { result, loading, error, refetch } = useMeQuery({ client: 'api2' });
   },
   tokenKey: 'auth_token',
   allowOffline: true,
+  refreshToken: async () => {
+    // ... see "Automatic Token Refresh" below
+  },
 })
 
+setAuthRouter(router) // enables SPA navigation on logout / session expiry
 app.use(apollo)
+app.use(router)
 app.mount('#app')
 ```
 
 ## Usage
 
-Use auto-generated composables in your Vue component.
+### Built-in Authentication
+
+The library ships with `useAuth`, a composable that handles the full session lifecycle out of the box — `me` query, single-flight verification, auth-error detection, store clearing, and SPA logout navigation.
+
+```typescript
+import { useAuth } from 'vue-apollo-client'
+import { MeDocument } from './graphql'
+
+// Shared reactive state — every component sees the same `user`.
+const { user, isAuthenticated, verify, logout, loading, error } = useAuth({
+  meQuery: MeDocument,            // generated GraphQL document
+  meSelector: (data) => data?.me, // how to extract the user
+  loginRoute: '/auth/login',      // SPA redirect target on logout
+})
+
+// Run the `me` query — returns true if authenticated, false otherwise.
+const ok = await verify()
+
+// Logout — clears the cookie, drops the Apollo store, navigates to login.
+await logout()
+```
+
+#### What `useAuth` does for you
+
+- **Single-flight `verify()`** — concurrent calls share the same promise
+- **Detects auth failures** — `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND` ("user not found"), HTTP 401 / 403
+- **Treats 5xx / offline as transient** — token is kept so a later retry can succeed
+- **On auth failure**: wipes cookie → clears Apollo store → SPA-navigates to `loginRoute`
+- **No reload storm** — an `_invalidating` latch prevents in-flight `me` responses from re-entering the teardown
+- **Auto-recovers on re-login** — a fresh token automatically clears the latch
+
+#### Router guard example
+
+```typescript
+import { useAuth, getToken } from 'vue-apollo-client'
+import { MeDocument } from './graphql'
+
+const { verify } = useAuth({
+  meQuery: MeDocument,
+  loginRoute: '/auth/login',
+})
+
+export const authGuard = async (to, _from, next) => {
+  if (!getToken()) {
+    return to.meta.requiresAuth
+      ? next({ path: '/auth/login', query: to.query })
+      : next()
+  }
+
+  if (to.meta.requiresAuth) {
+    const ok = await verify()
+    if (!ok) {
+      return next({ path: '/auth/login', query: { reason: 'session_expired' } })
+    }
+  }
+
+  next()
+}
+```
 
 ### 1. Define a query
 
@@ -227,17 +294,32 @@ Pass these options to `createApollo()`:
 | refetchTimeout     | `number`                    | Time in milliseconds to wait before refetching a query after a component, page, or route change. | `10000`                                        |
 | allowOffline       | `boolean`                   | Queue mutations when offline and sync when online.                                               | `false`                                        |
 | setContext         | `function`                  | method to setup context                                                                          | `({operationName, variables, token}) => any`   |
+| refreshToken       | `function`                  | Async function that returns a new access token when the current one expires                      | `undefined`                                    |
+| onLogout           | `function`                  | Called when refresh fails (or 401/403 is received). Library clears all client stores first.     | `undefined`                                    |
 
 ## Functions
 
-| Function           | Description                                                   | Syntax                                                           |
-| ------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------- |
-| setToken           | Sets the token and refresh token in the cookie                | `setToken(token)` or `setToken({ token, refreshToken })`         |
-| getToken           | Gets the token from the cookie                                | `getToken(key?)`                                                 |
-| getRefreshToken    | Gets the refresh token from the cookie                        | `getRefreshToken(key?)`                                          |
-| removeToken        | Removes the token and refresh token from the cookie           | `removeToken(key?, options?)`                                    |
-| loadApolloClients  | Initializes Apollo Clients for use outside components         | `loadApolloClients()`                                            |
-| useKeepCookieAlive | Keeps the auth token cookie alive by updating it periodically | `useKeepCookieAlive(debounceMs?: number)` (defaults to 10000 ms) |
+| Function           | Description                                                                                  | Syntax                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| setToken           | Sets the token and refresh token in the cookie. Cookie attrs are auto-detected.              | `setToken(token)` or `setToken({ token, refreshToken, options? })`                  |
+| getToken           | Gets the token from the cookie                                                               | `getToken(key?)`                                                                    |
+| getRefreshToken    | Gets the refresh token from the cookie                                                       | `getRefreshToken(key?)`                                                             |
+| removeToken        | Removes the token and refresh token. Uses auto-detected options so cookies on parent domains are removed correctly. | `removeToken(key?, options?)`                          |
+| getCookieOptions   | Returns the auto-detected cookie attributes for the current environment.                     | `getCookieOptions(overrides?)`                                                      |
+| loadApolloClients  | Initializes Apollo Clients for use outside components                                        | `loadApolloClients()`                                                               |
+| useKeepCookieAlive | Keeps the auth token cookie alive by updating it periodically                                | `useKeepCookieAlive(debounceMs?: number)` (defaults to 10000 ms)                    |
+| useAuth            | Built-in auth composable — shared reactive state, verify / logout, auto SPA navigate         | `useAuth({ meQuery, meSelector?, loginRoute?, clientId? })`                         |
+| setAuthRouter      | Registers the Vue Router instance so `useAuth` can do SPA navigation on logout               | `setAuthRouter(router)`                                                             |
+
+### `useAuth` options
+
+| Option                 | Type       | Description                                                                | Default            |
+| ---------------------- | ---------- | -------------------------------------------------------------------------- | ------------------ |
+| `meQuery`              | `Document` | **Required.** GraphQL document for fetching the current user.              | —                  |
+| `meSelector`           | `function` | Extract the user object from the query result.                            | `data => data?.me` |
+| `loginRoute`           | `string`   | Path to navigate to on logout / session expiry.                           | `'/login'`         |
+| `sessionExpiredReason` | `string`   | Query string parameter name for session-expiry redirects.                  | `'session_expired'`|
+| `clientId`             | `string`   | Apollo client name to use.                                                 | `'default'`        |
 
 ### Refresh Token Support
 
@@ -245,7 +327,7 @@ The client automatically handles `UNAUTHENTICATED` (401) errors. If a request fa
 
 1. It calls a `refreshToken` mutation on your backend.
 2. If successful, it updates the cookies and retries the original request.
-3. If valid tokens are not returned, it logs the user out.
+3. If valid tokens are not returned, it logs the user out: calls `onLogout`, clears all client stores, removes the cookie, and SPA-navigates to `loginRoute` (if `useAuth` is being used).
 
 To enable this, ensure your login flow saves the refresh token:
 
@@ -275,8 +357,10 @@ const apollo = createApollo({
     return data.accessToken // Return the new token
   },
   onLogout: () => {
-    // Redirect to login page
-    window.location.href = '/login'
+    // The library already cleared all Apollo stores before this runs.
+    // Use this hook for additional cross-cutting teardown — analytics,
+    // toast notification, etc. SPA navigation is handled by `useAuth`.
+    console.log('session ended')
   },
 })
 ```
@@ -285,21 +369,37 @@ const apollo = createApollo({
 
 ### Cookie Management & Security
 
-`vue-apollo-client` automatically sets secure defaults for cookies (`SameSite=None`, `Secure`, `Path=/`) when using `setToken`.
+`vue-apollo-client` auto-detects the best cookie attributes for the current environment, so you rarely need to pass anything:
+
+| Field      | Auto-detected value                                                                |
+| ---------- | ---------------------------------------------------------------------------------- |
+| `path`     | `'/'`                                                                              |
+| `secure`   | `true` on HTTPS, `false` on localhost                                              |
+| `sameSite` | `'None'` on HTTPS, `'Lax'` on localhost / HTTP                                     |
+| `domain`   | parent domain for subdomains (e.g. `app.example.com` → `.example.com`), none on localhost / IP |
+
+The library also coerces `SameSite=None` → `Secure=true` automatically (browsers reject the cookie otherwise).
 
 ```typescript
-import { setToken, useKeepCookieAlive } from 'vue-apollo-client'
+import { setToken, getCookieOptions, useKeepCookieAlive } from 'vue-apollo-client'
 
-// Login
-setToken('jwt-token')
+// Login — no options needed
+setToken({ token: 'jwt', refreshToken: 'rt' })
 
-// Monitor activity to keep session alive
+// Override individual fields when you need to (e.g. custom path)
+setToken({ token: 'jwt', options: { path: '/admin' } })
+
+// Inspect the auto-detected defaults
+console.log(getCookieOptions())
+// → { path: '/', domain: '.example.com', secure: true, sameSite: 'None' }
+
+// Keep the session alive on user activity
 useKeepCookieAlive()
 ```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. Please feel free to submit a Pull Request.
 
 ## License
 
