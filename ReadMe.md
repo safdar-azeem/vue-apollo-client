@@ -189,21 +189,38 @@ const { result, loading, error, refetch } = useMeQuery()
 </script>
 ```
 
-### 3. Server-side Query (SSR)
+### 3. Server-side Query (SSR) and Async Prefetching
 
-If you are using this with SSR (e.g. `vite-ssr` or custom setup), you can await the query to fetch data on the server.
+Our `useQuery` implementation automatically detects SSR environments (`typeof window === 'undefined'`) and transforms the composable into an `async` function that returns a Promise. This allows your server-side rendering framework to await the data before rendering the HTML.
 
 ```vue
 <script setup>
 import { useMeQuery } from './graphql/generated'
 
-// Await the result for SSR pre-fetching
+// Automatically an async call during SSR!
 const { result, loading, error, refetch } = await useMeQuery()
 </script>
 
 <template>
   <div v-if="result">Welcome, {{ result.me.name }}!</div>
 </template>
+```
+
+#### The `ssr: true` option (Client-Side Suspense)
+
+You can also explicitly pass `{ ssr: true }` as an option to force the query to behave asynchronously *even on the client side*. This is highly useful when using Vue's `<Suspense>` component, allowing you to block the component tree from rendering until the data is fully fetched.
+
+```vue
+<script setup>
+import { useGetUserQuery } from './graphql/generated'
+
+// Forces the query to return a Promise on the client side as well.
+// The component mounting will suspend until the query finishes.
+const { result } = await useGetUserQuery(
+  { id: 1 },
+  { ssr: true }
+)
+</script>
 ```
 
 ### Different Apollo Clients
@@ -238,31 +255,57 @@ const { result: otherResult } = useGetUserQuery({ id: computed(() => '2') })
 </script>
 ```
 
-### Multple Queries
+### Smart Query Caching & Auto-Refetching
 
-The `useMultiQuery` composable allows you to combine multiple GraphQL queries into a single loading/error state.
-**Note**: Unlike the Nuxt version, you must pass the generated query hooks code map (or object containing them) if you want to use them by key, or pass the functions directly.
+Our `useQuery` implementation includes intelligent caching and auto-refetching mechanisms out of the box:
+
+- **Global Cache Sharing**: If multiple components use the same query with the same variables, they automatically share the cache and in-flight request, preventing duplicate network calls.
+- **Smart Refetch on Update**: When `refetchOnUpdate: true` is set (globally or per-query), queries will automatically refetch when component props change or when the Vue Router path changes. 
+- **Refetch Debouncing**: The `refetchTimeout` option (default: `10000`ms) ensures that queries aren't spammed. A query won't be auto-refetched if it was successfully fetched within the timeout window.
+- **Garbage Collection**: Inactive queries that are no longer used by any mounted components are automatically garbage-collected after 5 minutes to free up memory.
+- **Cache-Only Support**: Respects `fetchPolicy: 'cache-only'`, bypassing all auto-refetch mechanisms.
+
+### Multiple Queries (`useMultiQuery`)
+
+The `useMultiQuery` composable allows you to combine multiple GraphQL queries into a single unified loading/error state and refetch function.
 
 ```typescript
 import { useMultiQuery } from 'vue-apollo-client'
 import * as queries from './graphql/generated' // Import all generated hooks
 
 const { result, loading, error, refetch } = useMultiQuery(
-  queries,
-  ['useGetUserQuery', 'useMeQuery'], // Keys must match exported names
-  {
-    /* shared variables */
-  },
-  {
-    /* options */
-  }
+  queries, // 1. Map of query definitions
+  ['useGetUserQuery', 'useMeQuery'], // 2. Array of query keys to execute
+  { /* shared variables */ },
+  { /* options */ }
 )
 
-const users = result.value?.getUser
-const me = result.value?.me
+// Data is automatically unwrapped from the root query field!
+// No need to do `result.value.useGetUserQuery.getUser`, just:
+const users = result.value?.useGetUserQuery 
+const me = result.value?.useMeQuery
+
+// Combined loading state across all queries
+if (loading.value) { /* ... */ }
+
+// Map of errors by query key
+if (error.value.useGetUserQuery) { /* ... */ }
+
+// Refetch all queries at once
+await refetch()
+
+// Or selectively refetch specific queries
+await refetch({ /* new variables */ }, ['useMeQuery'])
 ```
 
 ### Mutations
+
+Our `useMutation` composable includes advanced features for offline resilience and cache invalidation:
+
+- **Offline Support (`allowOffline`)**: If `allowOffline: true` is configured and the user goes offline, mutations are automatically serialized and queued in `localStorage`. Once the user reconnects to the network, the client automatically syncs the queued mutations in the background.
+- **Smart `refetchQueries`**: When you pass operation names to `refetchQueries` (e.g., `['GetUsers']`), the client performs a two-step invalidation:
+  1. It actively refetches any currently mounted observable queries with that name.
+  2. It aggressively evicts the data from the Apollo `InMemoryCache` using garbage collection. This ensures that even if the query is currently unmounted, it will fetch fresh data from the network the next time it mounts, rather than relying on stale cache.
 
 ```vue
 <script setup lang="ts">
@@ -271,7 +314,10 @@ import { useDeletePostMutation } from './graphql/generated'
 const { mutate, loading, error, onDone, onError } = useDeletePostMutation()
 
 const handleDelete = async (id: string) => {
-  await mutate({ id })
+  await mutate(
+    { id }, 
+    { refetchQueries: ['GetPosts'] } // Smartly updates active and inactive queries
+  )
   // Handle successful deletion
 }
 </script>
