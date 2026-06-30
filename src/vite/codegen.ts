@@ -31,6 +31,7 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
       generates: {
         [output]: {
           plugins: [
+            { add: { content: '// @ts-nocheck\n/* eslint-disable */\n' } },
             require.resolve('@graphql-codegen/typescript'),
             require.resolve('@graphql-codegen/typescript-operations'),
             require.resolve('@graphql-codegen/typescript-vue-apollo'),
