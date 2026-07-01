@@ -23,14 +23,57 @@ const getKey = (key: string) => {
 	return key || config?.tokenKey || 'token'
 }
 
+const isIpAddress = (hostname: string): boolean => /^\d+\.\d+\.\d+\.\d+$/.test(hostname)
+
+const isLocalhost = (hostname: string): boolean =>
+	hostname === 'localhost' || hostname === '127.0.0.1'
+
+const getParentDomainCandidates = (hostname: string): string[] => {
+	if (isLocalhost(hostname) || isIpAddress(hostname)) return []
+
+	const parts = hostname.toLowerCase().split('.').filter(Boolean)
+	if (parts.length < 3) return []
+
+	const domains = new Set<string>()
+	for (let index = 0; index < parts.length - 1; index += 1) {
+		const domain = parts.slice(index).join('.')
+		domains.add(`.${domain}`)
+		domains.add(domain)
+	}
+
+	return Array.from(domains)
+}
+
+const getLegacyDomainRemovalOptions = (
+	options: CookieAttributes = {},
+): CookieAttributes[] => {
+	if (typeof window === 'undefined') return []
+
+	const baseOptions = getCookieOptions(options)
+	return getParentDomainCandidates(window.location.hostname).map((domain) => ({
+		...baseOptions,
+		domain,
+	}))
+}
+
+const removeLegacyDomainCookies = (tokenKey: string, options?: CookieAttributes) => {
+	for (const removalOptions of getLegacyDomainRemovalOptions(options)) {
+		Cookies.remove(tokenKey, removalOptions)
+		Cookies.remove(`${tokenKey}_refresh`, removalOptions)
+		Cookies.remove(`temp_${tokenKey}`, removalOptions)
+		Cookies.remove(`temp_${tokenKey}_refresh`, removalOptions)
+	}
+}
+
 /**
  * Resolve the best cookie options for the current environment.
  *
  * - `path`:    '/'
  * - `secure`:  true on HTTPS (false on localhost so dev works)
  * - `sameSite`: 'None' on HTTPS, 'Lax' on localhost / HTTP
- * - `domain`:  parent domain for subdomains (e.g. `app.example.com`
- *              → `.example.com`), undefined on localhost / IP
+ * - `domain`:  undefined by default so cookies are host-only.
+ *              Pass `overrides.domain` only when an app intentionally
+ *              wants auth cookies shared across subdomains.
  *
  * Pass `overrides` to override any field. SameSite=None requires
  * Secure=true, so it's coerced automatically.
@@ -41,25 +84,13 @@ export const getCookieOptions = (overrides: CookieAttributes = {}): CookieAttrib
 	}
 
 	const hostname = window.location.hostname
-	const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1'
 	const isHttps = window.location.protocol === 'https:'
-	const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(hostname)
 
-	// Domain: parent domain for subdomains, none for localhost / IP
-	let domain: string | undefined
-	if (!isLocalhost && !isIp) {
-		const parts = hostname.split('.')
-		if (parts.length >= 2) {
-			domain = `.${parts.slice(-2).join('.')}`
-		}
-	}
-
-	const secure = isHttps && !isLocalhost
+	const secure = isHttps && !isLocalhost(hostname)
 	const sameSite: 'Lax' | 'None' = secure ? 'None' : 'Lax'
 
 	return {
 		path: '/',
-		...(domain ? { domain } : {}),
 		secure,
 		sameSite,
 		...overrides,
@@ -114,6 +145,8 @@ export const setToken = (
 
 	// Use the key properly by checking config
 	const tokenKey = getKey(key)
+	removeLegacyDomainCookies(tokenKey, options)
+
 	Cookies.set(tokenKey, token, finalOptions)
 
 	if (refreshToken) {
@@ -124,29 +157,32 @@ export const setToken = (
 
 export const getToken = (key = '') => {
 	const tokenKey = getKey(key)
+	removeLegacyDomainCookies(tokenKey)
 	return Cookies.get(tokenKey)
 }
 
 export const getRefreshToken = (key = '') => {
 	const tokenKey = getKey(key)
+	removeLegacyDomainCookies(tokenKey)
 	return Cookies.get(`${tokenKey}_refresh`)
 }
 
 /**
- * Remove the auth tokens. Uses the same auto-detected cookie options
- * as `setToken` (same domain / path / etc.) — without this, cookies
- * set on a parent domain (.example.com) won't be removed when called
- * with no options.
+ * Remove the auth tokens. Host-only cookies are removed first, then
+ * legacy parent-domain variants are cleared so old shared cookies
+ * cannot leak between the main portal and workspace subdomains.
  */
 export const removeToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
 	const finalOptions = getCookieOptions(options)
 	Cookies.remove(tokenKey, finalOptions)
 	Cookies.remove(`${tokenKey}_refresh`, finalOptions)
+	removeLegacyDomainCookies(tokenKey, options)
 }
 
 export const stashToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
+	removeLegacyDomainCookies(tokenKey, options)
 	const token = Cookies.get(tokenKey)
 	const refresh = Cookies.get(`${tokenKey}_refresh`)
 
@@ -170,6 +206,7 @@ export const stashToken = (key = '', options?: CookieAttributes) => {
 
 export const restoreStashedToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
+	removeLegacyDomainCookies(tokenKey, options)
 	const tempToken = Cookies.get(`temp_${tokenKey}`)
 	const tempRefresh = Cookies.get(`temp_${tokenKey}_refresh`)
 
