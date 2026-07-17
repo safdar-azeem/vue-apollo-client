@@ -1,6 +1,6 @@
 import type { App } from 'vue'
 import { ApolloClients } from '@vue/apollo-composable'
-import type { ApolloClient, NormalizedCacheObject } from '@apollo/client/core'
+import type { ApolloClient, NormalizedCacheObject } from '@apollo/client/core/index.js'
 import type {
   VueApolloClientOptions,
   VueApolloRuntimeOptions,
