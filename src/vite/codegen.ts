@@ -2,10 +2,47 @@ import { generate } from '@graphql-codegen/cli'
 import { VueApolloViteOptions } from './types'
 import path from 'path'
 import { createRequire } from 'module'
+import { readdir, readFile } from 'node:fs/promises'
+import { Kind, parse } from 'graphql'
 
 const require = createRequire(import.meta.url)
 
+const validateOperationSources = async (rootDir: string) => {
+  const sourceRoot = path.resolve(rootDir, 'src')
+  const operationNames = new Map<string, string>()
+  const visit = async (directory: string): Promise<void> => {
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') return
+      throw error
+    }
+    await Promise.all(entries.map(async (entry) => {
+      const filename = path.join(directory, entry.name)
+      if (entry.isDirectory()) return visit(filename)
+      if (!entry.isFile() || !/\.(graphql|gql)$/i.test(entry.name)) return
+      const document = parse(await readFile(filename, 'utf8'))
+      for (const definition of document.definitions) {
+        if (definition.kind !== Kind.OPERATION_DEFINITION) continue
+        const name = definition.name?.value
+        const relative = path.relative(rootDir, filename).split(path.sep).join('/')
+        if (!name) throw new Error(`Anonymous GraphQL operation in ${relative}.`)
+        const previous = operationNames.get(name)
+        if (previous) {
+          throw new Error(
+            `Duplicate GraphQL operation "${name}" in ${previous} and ${relative}.`
+          )
+        }
+        operationNames.set(name, relative)
+      }
+    }))
+  }
+  await visit(sourceRoot)
+}
+
 export const runCodegen = async (options: VueApolloViteOptions, rootDir: string) => {
+  await validateOperationSources(rootDir)
   const schema = options.schema || 'http://localhost:4000/graphql'
   
   // Resolve the output path
@@ -14,7 +51,7 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
 
   // Normalize documents to an array
   const configuredDocuments =
-    options.documents || ['src/**/*.{graphql,gql,ts}']
+    options.documents || ['src/**/*.{graphql,gql}']
   const documents =
     typeof configuredDocuments === 'string'
       ? [configuredDocuments]
