@@ -21,15 +21,15 @@ A Vue 3, Vite, Nuxt 3 Apollo Client featuring smart queries with caching and ref
 ## Installation
 
 ```bash
-npm install vue-apollo-client
+npm install vue-apollo-client @apollo/client @vue/apollo-composable graphql graphql-tag vue vue-router
 # or
-yarn add vue-apollo-client
+yarn add vue-apollo-client @apollo/client @vue/apollo-composable graphql graphql-tag vue vue-router
 ```
 
 ### Everything is set up for you: 🚀
 
-- No need to install Apollo Client or GraphQL codegen packages
-- All necessary dependencies will be automatically handled
+- Apollo, GraphQL, Vue, and Vue Router are shared peer dependencies, preventing duplicate runtime instances
+- GraphQL codegen and upload support are installed with the package
 - Apollo Client configuration is done for you
 - Cookie attributes (domain, secure, sameSite) are auto-detected
 - Auth flow (verify / logout / session expiry) is built in
@@ -88,7 +88,7 @@ const apollo = createApollo({
     default: 'http://localhost:4000/graphql',
     // Add more endpoints as needed
     // api2: 'http://localhost:3000/graphql',
-    // const { result, loading, error, refetch } = useMeQuery({ client: 'api2' });
+    // const { result, loading, error, refetch } = useMeQuery({}, { clientId: 'api2' });
   },
   tokenKey: 'auth_token',
   allowOffline: true,
@@ -189,16 +189,15 @@ const { result, loading, error, refetch } = useMeQuery()
 </script>
 ```
 
-### 3. Server-side Query (SSR) and Async Prefetching
+### 3. Server-side Query (SSR) and Hydration
 
-Our `useQuery` implementation automatically detects SSR environments (`typeof window === 'undefined'`) and transforms the composable into an `async` function that returns a Promise. This allows your server-side rendering framework to await the data before rendering the HTML.
+Generated query composables have one return shape in the browser and on the server. During Vue SSR, `useQuery` uses Vue Apollo's native `onServerPrefetch` integration, so `renderToString` waits for enabled initial queries. Consumers do not need separate `useSsrQuery` files or async-only generated APIs.
 
 ```vue
 <script setup>
 import { useMeQuery } from './graphql/generated'
 
-// Automatically an async call during SSR!
-const { result, loading, error, refetch } = await useMeQuery()
+const { result, loading, error, refetch } = useMeQuery()
 </script>
 
 <template>
@@ -206,22 +205,41 @@ const { result, loading, error, refetch } = await useMeQuery()
 </template>
 ```
 
-#### The `ssr: true` option (Client-Side Suspense)
-
-You can also explicitly pass `{ ssr: true }` as an option to force the query to behave asynchronously *even on the client side*. This is highly useful when using Vue's `<Suspense>` component, allowing you to block the component tree from rendering until the data is fully fetched.
+`ssr: false` disables server prefetch for a query. `ssr: true` explicitly enables it. The option never changes the composable into a Promise.
 
 ```vue
 <script setup>
 import { useGetUserQuery } from './graphql/generated'
 
-// Forces the query to return a Promise on the client side as well.
-// The component mounting will suspend until the query finishes.
-const { result } = await useGetUserQuery(
+const { result } = useGetUserQuery(
   { id: 1 },
   { ssr: true }
 )
 </script>
 ```
+
+`vue-ssr-lite` owns this lifecycle automatically. For another SSR host, create a fresh Apollo runtime for each request, extract it after rendering, and restore it before browser mount:
+
+```typescript
+const apollo = createApollo(options, {
+  server: true,
+  headers: { cookie: filteredCookie },
+  requestTimeoutMs: 8_000,
+})
+
+app.use(apollo)
+const html = await renderToString(app)
+const state = apollo.extract()
+
+// Browser bootstrap, before app.mount(...)
+const browserApollo = createApollo(options, {
+  server: false,
+  initialState: state,
+})
+app.use(browserApollo)
+```
+
+Server runtimes are never registered in the browser-global client store. This keeps named clients, caches, headers, refresh coordination, and query state isolated between concurrent requests. Restored cache data is available before hydration and Apollo's `ssrForceFetchDelay` prevents force-fetch policies from duplicating completed initial queries during the hydration window.
 
 ### Different Apollo Clients
 
@@ -232,7 +250,7 @@ You can use different Apollo Clients for different queries.
 // with default client
 const { result, loading, error, refetch } = useMeQuery()
 // with api2 client
-const { result, loading, error, refetch } = useMeQuery({ client: 'api2' })
+const { result, loading, error, refetch } = useMeQuery({}, { clientId: 'api2' })
 </script>
 ```
 
@@ -342,6 +360,11 @@ Pass these options to `createApollo()`:
 | setContext         | `function`                  | method to setup context                                                                          | `({operationName, variables, token}) => any`   |
 | refreshToken       | `function`                  | Async function that returns a new access token when the current one expires                      | `undefined`                                    |
 | onLogout           | `function`                  | Called when refresh fails (or 401/403 is received). Library clears all client stores first.     | `undefined`                                    |
+| getToken           | `function`                  | Optional browser token provider for non-cookie session stores.                                  | cookie lookup                                  |
+| clearToken         | `function`                  | Optional browser token cleanup callback.                                                         | cookie removal                                 |
+| formatToken        | `function`                  | Formats the Authorization value, for example by adding a Bearer prefix.                          | identity                                       |
+
+The second `createApollo(options, runtime)` argument is request/runtime-specific: `server`, `headers`, `initialState`, `fetch`, `signal`, `requestTimeoutMs`, and `registerGlobal`. Do not put request headers or SSR cache state in module scope.
 
 ## Functions
 
