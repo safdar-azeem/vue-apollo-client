@@ -7,7 +7,8 @@ import {
 export type { UseMutationOptions, UseMutationReturn } from '@vue/apollo-composable'
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { getGlobalConfig } from '../configStore'
-import { ApolloClient, gql, OperationVariables } from '@apollo/client/core'
+import { gql } from '@apollo/client/core/index.js'
+import type { ApolloClient, OperationVariables } from '@apollo/client/core/index.js'
 
 const MUTATION_QUEUE_KEY = 'apollo_mutation_queue'
 let isSyncing = false
