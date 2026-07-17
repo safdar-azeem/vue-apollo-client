@@ -2,7 +2,9 @@ import type {
   ApolloClientOptions,
   InMemoryCacheConfig,
   NormalizedCacheObject,
+  OperationVariables,
 } from '@apollo/client/core/index.js'
+import type { DocumentNode } from 'graphql'
 import type { ApolloUploadConfig } from './utils/graphql.config'
 
 export type VueApolloState = Record<string, NormalizedCacheObject>
@@ -27,7 +29,29 @@ export interface VueApolloRuntimeOptions {
   registerGlobal?: boolean
 }
 
+export interface VueApolloRefreshTokens {
+  token: string
+  refreshToken?: string | null
+}
+
+export interface VueApolloRefreshContract<
+  TData = unknown,
+  TVariables extends OperationVariables = OperationVariables,
+> {
+  document: DocumentNode
+  clientId?: string
+  getRefreshToken: () => string | null | undefined
+  createVariables: (refreshToken: string) => TVariables
+  selectTokens: (data: TData) => VueApolloRefreshTokens | null | undefined
+  persistTokens: (tokens: VueApolloRefreshTokens) => void | Promise<void>
+  clearTokens?: () => void | Promise<void>
+}
+
 export interface VueApolloClientOptions {
+  /** Stable Vue application identity used to isolate persisted runtime state. */
+  applicationId?: string
+  /** Stable authentication boundary, for example `admin` or `storefront-customer`. */
+  authBoundary?: string
   endPoints: Record<string, string>
   tokenKey?: string
   tokenExpiration?: number | Date
@@ -38,6 +62,11 @@ export interface VueApolloClientOptions {
   refetchOnUpdate?: boolean
   refetchTimeout?: number
   allowOffline?: boolean
+  /** Identifies the current session without persisting access tokens. */
+  getSessionId?: () => string | null | undefined
+  /** Generated-document refresh contract owned and executed by this runtime. */
+  refresh?: VueApolloRefreshContract<any, any>
+  /** @deprecated Use `refresh` with a generated document. */
   refreshToken?: () => Promise<string | void | null>
   onLogout?: () => void
   /** Override cookie token lookup (for example, a storefront localStorage session). */
