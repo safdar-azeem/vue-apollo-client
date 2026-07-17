@@ -1,7 +1,6 @@
-import { useQuery as apolloUseQuery } from '@vue/apollo-composable'
-import { unref, type Ref } from 'vue'
+import { type Ref } from 'vue'
 import type { OperationVariables } from '@apollo/client/core/index.js'
-import type { UseQueryOptions, UseQueryReturn } from './useQuery'
+import { useQuery, type UseQueryOptions, type UseQueryReturn } from './useQuery'
 
 /**
  * Backward-compatible alias for the unified query composable.
@@ -10,6 +9,9 @@ import type { UseQueryOptions, UseQueryReturn } from './useQuery'
  * callers receive the same synchronous return object on server and browser.
  * Existing `await useSSRQuery(...)` calls remain valid because awaiting a
  * non-Promise returns that object unchanged.
+ *
+ * @deprecated Use the generated query composable or `useQuery`. This alias
+ * will be removed in the next major release.
  */
 export const useSSRQuery = <
   TResult = any,
@@ -22,23 +24,5 @@ export const useSSRQuery = <
     | Ref<UseQueryOptions<TResult, TVariables>>
     | (() => UseQueryOptions<TResult, TVariables>)
 ): UseQueryReturn<TResult, TVariables> => {
-  const normalizedOptions = () => {
-    const resolved = typeof options === 'function' ? options() : unref(options) || {}
-    const {
-      ssr,
-      refetchOnUpdate: _refetchOnUpdate,
-      refetchTimeout: _refetchTimeout,
-      ...nativeOptions
-    } = resolved
-    return {
-      ...nativeOptions,
-      prefetch: typeof window === 'undefined' ? ssr !== false : nativeOptions.prefetch,
-    }
-  }
-
-  return apolloUseQuery<TResult, TVariables>(
-    document,
-    variables as any,
-    normalizedOptions as any
-  )
+  return useQuery<TResult, TVariables>(document, variables, options)
 }
