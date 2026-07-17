@@ -1,108 +1,44 @@
-import { ref } from 'vue'
-import { inject } from 'vue'
-import { ApolloClients } from '@vue/apollo-composable'
-import { ApolloClient } from '@apollo/client/core'
-import { getClients } from '../configStore'
-import { provideApolloClients } from '@vue/apollo-composable'
+import { useQuery as apolloUseQuery } from '@vue/apollo-composable'
+import { unref, type Ref } from 'vue'
+import type { OperationVariables } from '@apollo/client/core'
+import type { UseQueryOptions, UseQueryReturn } from './useQuery'
 
-const defaultResult = () => {
-  const result = ref(null)
-  const loading = ref(false)
-  const error = ref(null)
-
-  return {
-    result,
-    loading,
-    error,
-    onResult: (callback: any) => {
-      callback?.(result.value)
-    },
-    onError: (callback: any) => {
-      callback?.(error.value)
-    },
-    start: () => {},
-    stop: () => {},
-    restart: () => {},
-    refetch: () => {},
-    onCompleted: () => {},
-  }
-}
-
-export const useSSRQuery = async (document: any, variables: any, options: any) => {
-  const clientId = options?.clientId || 'default'
-
-  // Try inject first (inside component), fallback to global store (outside component)
-  let clients = inject(ApolloClients, null) as Record<string, ApolloClient<any>> | null
-  if (!clients) {
-    const globalClients = getClients()
-    if (globalClients) {
-      // Ensure provideApolloClients is called so @vue/apollo-composable works too
-      provideApolloClients(globalClients)
-      clients = globalClients
+/**
+ * Backward-compatible alias for the unified query composable.
+ *
+ * Vue Apollo's native `onServerPrefetch` integration performs SSR prefetching;
+ * callers receive the same synchronous return object on server and browser.
+ * Existing `await useSSRQuery(...)` calls remain valid because awaiting a
+ * non-Promise returns that object unchanged.
+ */
+export const useSSRQuery = <
+  TResult = any,
+  TVariables extends OperationVariables = OperationVariables,
+>(
+  document: any,
+  variables?: TVariables | (() => TVariables) | Ref<TVariables>,
+  options?:
+    | UseQueryOptions<TResult, TVariables>
+    | Ref<UseQueryOptions<TResult, TVariables>>
+    | (() => UseQueryOptions<TResult, TVariables>)
+): UseQueryReturn<TResult, TVariables> => {
+  const normalizedOptions = () => {
+    const resolved = typeof options === 'function' ? options() : unref(options) || {}
+    const {
+      ssr,
+      refetchOnUpdate: _refetchOnUpdate,
+      refetchTimeout: _refetchTimeout,
+      ...nativeOptions
+    } = resolved
+    return {
+      ...nativeOptions,
+      prefetch: typeof window === 'undefined' ? ssr !== false : nativeOptions.prefetch,
     }
   }
 
-  const apolloClient = clients?.[clientId]
-
-  if (!apolloClient) {
-    console.error(`Apollo client "${clientId}" not found. Make sure loadApolloClients() is called before using queries outside components.`)
-    return defaultResult()
-  }
-
-  try {
-    const queryResult = await apolloClient.query({
-      query: document,
-      variables,
-      ...options,
-    })
-
-    const result = ref(queryResult?.data)
-    const loading = ref(false)
-    const error = ref(queryResult?.error)
-    let onResultCallBack = (vars: any) => {}
-
-    const onResult = (callback: any) => {
-      if (queryResult?.data) {
-        onResultCallBack = callback
-        callback?.(result)
-      }
-    }
-
-    const onError = (callback: any) => {
-      if (queryResult?.error) {
-        callback?.(queryResult.error)
-      }
-    }
-
-    const refetch = async (newVariables: any) => {
-      error.value = null as any
-
-      try {
-        const refetchResult = await apolloClient.query({
-          query: document,
-          variables: newVariables || variables,
-          fetchPolicy: 'network-only',
-          ...options,
-        })
-
-        onResultCallBack(refetchResult?.data)
-
-        result.value = refetchResult?.data
-        return refetchResult
-      } catch (refetchError) {
-        error.value = refetchError as any
-        throw refetchError
-      }
-    }
-
-    return { ...defaultResult(), result, loading, error, onResult, onError, refetch }
-  } catch (error) {
-    const errorRef = ref(error)
-
-    const onError = (callback: any) => {
-      callback?.(error)
-    }
-
-    return { ...defaultResult(), error: errorRef, onError }
-  }
+  return apolloUseQuery<TResult, TVariables>(
+    document,
+    variables as any,
+    normalizedOptions as any
+  )
 }
