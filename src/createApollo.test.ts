@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createSSRApp, defineComponent, h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { gql } from '@apollo/client/core'
+import { gql } from '@apollo/client/core/index.js'
 import { createApollo } from './createApollo'
 import { useQuery } from './composables/useQuery'
 
