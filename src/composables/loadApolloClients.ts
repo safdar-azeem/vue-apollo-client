@@ -1,6 +1,7 @@
 import { getClients } from '../configStore'
 import { provideApolloClients } from '@vue/apollo-composable'
 
+/** @deprecated Install `createApollo(...)` on the owning Vue application. */
 export function loadApolloClients() {
   if (typeof window === 'undefined') {
     throw new Error(
