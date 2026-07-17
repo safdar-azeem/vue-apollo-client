@@ -1,7 +1,7 @@
 import { useLazyQuery as apolloUseLazyQuery, UseQueryReturn } from '@vue/apollo-composable'
 import { UseQueryOptions } from './useQuery'
 import { ref, Ref, unref } from 'vue'
-import { OperationVariables } from '@apollo/client/core'
+import type { OperationVariables } from '@apollo/client/core/index.js'
 import { unwrapVariables } from '../utils/common'
 
 export interface UseLazyQueryReturn<
