@@ -1,6 +1,6 @@
 import { useQuery as apolloUseQuery } from '@vue/apollo-composable'
 import { unref, type Ref } from 'vue'
-import type { OperationVariables } from '@apollo/client/core'
+import type { OperationVariables } from '@apollo/client/core/index.js'
 import type { UseQueryOptions, UseQueryReturn } from './useQuery'
 
 /**
