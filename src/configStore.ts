@@ -1,4 +1,4 @@
-import type { ApolloClient } from '@apollo/client/core'
+import type { ApolloClient } from '@apollo/client/core/index.js'
 import type { VueApolloClientOptions } from './types'
 
 let globalConfig: VueApolloClientOptions | null = null
