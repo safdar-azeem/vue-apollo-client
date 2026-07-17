@@ -16,7 +16,10 @@ import {
   restoreStashedToken,
   removeToken,
 } from '../composables/useCookies'
-import type { VueApolloRuntimeOptions } from '../types'
+import type {
+  VueApolloRefreshContract,
+  VueApolloRuntimeOptions,
+} from '../types'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -38,17 +41,13 @@ interface ConfigProps {
   useGETForQueries?: boolean
   apolloClientConfig?: Partial<ApolloClientOptions<any>> | null
   apolloUploadConfig?: Partial<ApolloUploadConfig>
+  refresh?: VueApolloRefreshContract<any, any>
   refreshToken?: () => Promise<string | void | null>
   onLogout?: () => void
   getToken?: () => string | null | undefined
   clearToken?: () => void
   formatToken?: (token: string) => string
   runtime?: VueApolloRuntimeOptions
-}
-
-interface RefreshWaiter {
-  resolve: (token: string | null) => void
-  reject: (error: unknown) => void
 }
 
 const positiveTimeout = (value: number | undefined): number | undefined =>
@@ -90,6 +89,7 @@ export const graphqlConfig = ({
   useGETForQueries,
   apolloClientConfig,
   apolloUploadConfig,
+  refresh,
   refreshToken,
   onLogout,
   getToken,
@@ -108,19 +108,8 @@ export const graphqlConfig = ({
 
   if (!server) restoreStashedToken(tokenKey)
 
-  // Refresh coordination is scoped to this client set. Every SSR request calls
-  // graphqlConfig independently, so concurrent users cannot share auth state.
-  let isRefreshing = false
-  let failedQueue: RefreshWaiter[] = []
-  const processQueue = (error: unknown, token: string | null = null) => {
-    for (const waiter of failedQueue) {
-      if (error) waiter.reject(error)
-      else waiter.resolve(token)
-    }
-    failedQueue = []
-  }
-
   const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {}
+  const refreshPromises = new Map<string, Promise<string>>()
   const clearAllStores = () => {
     for (const client of Object.values(clients)) {
       try {
@@ -151,17 +140,53 @@ export const graphqlConfig = ({
     }
   })
 
-  const errorLink = onError(
+  const runRefresh = (failedClientId: string): Promise<string> => {
+    const refreshClientId = refresh?.clientId || failedClientId
+    const existing = refreshPromises.get(refreshClientId)
+    if (existing) return existing
+
+    const promise = (async () => {
+      if (refresh) {
+        const refreshTokenValue = refresh.getRefreshToken()
+        if (!refreshTokenValue) throw new Error('No refresh token is available.')
+        const refreshClient = clients[refreshClientId]
+        if (!refreshClient) {
+          throw new Error(`Apollo refresh client "${refreshClientId}" is not installed.`)
+        }
+        const result = await refreshClient.mutate({
+          mutation: refresh.document,
+          variables: refresh.createVariables(refreshTokenValue),
+          errorPolicy: 'none',
+          context: { vueApolloSkipRefresh: true },
+        })
+        const tokens = refresh.selectTokens(result.data)
+        if (!tokens?.token) throw new Error('Token refresh returned no access token.')
+        await refresh.persistTokens(tokens)
+        return tokens.token
+      }
+
+      const token = await refreshToken?.()
+      if (!token) throw new Error('Token refresh returned no access token.')
+      return token
+    })().finally(() => refreshPromises.delete(refreshClientId))
+
+    refreshPromises.set(refreshClientId, promise)
+    return promise
+  }
+
+  const createErrorLink = (clientId: string) => onError(
     ({ graphQLErrors, networkError, operation, forward }) => {
       if (server) return
 
-      if (networkError) {
-        const statusCode =
-          (networkError as any)?.statusCode ??
-          (networkError as any)?.result?.status
+      const statusCode =
+        (networkError as any)?.statusCode ??
+        (networkError as any)?.result?.status
+      const networkAuthenticationFailure =
+        statusCode === 401 || statusCode === 403
 
-        if (statusCode === 401 || statusCode === 403) {
-          if (readToken()) {
+      if (networkError) {
+        if (networkAuthenticationFailure && !refresh && !refreshToken) {
+          if (readToken() || refresh?.getRefreshToken()) {
             removeConfiguredToken()
             clearAllStores()
             onLogout?.()
@@ -189,44 +214,30 @@ export const graphqlConfig = ({
         (error) =>
           error.extensions?.code === 'UNAUTHENTICATED' ||
           error.message === 'Unauthorized'
-      )
-      if (!authenticationFailure || !refreshToken || !readToken()) return
-
-      if (isRefreshing) {
-        return fromPromise(
-          new Promise<string | null>((resolve, reject) => {
-            failedQueue.push({ resolve, reject })
-          })
-        )
-          .filter(Boolean)
-          .flatMap((accessToken) => {
-            operation.setContext(({ headers = {} }) => ({
-              headers: {
-                ...headers,
-                authorization: formatToken(String(accessToken)),
-              },
-            }))
-            return forward(operation)
-          })
+      ) || networkAuthenticationFailure
+      const canRefresh = refresh
+        ? Boolean(refresh.getRefreshToken())
+        : Boolean(refreshToken && readToken())
+      if (authenticationFailure && !canRefresh) {
+        removeConfiguredToken()
+        void refresh?.clearTokens?.()
+        clearAllStores()
+        onLogout?.()
+        return
       }
+      if (
+        !authenticationFailure ||
+        operation.getContext()?.vueApolloSkipRefresh
+      ) return
 
-      isRefreshing = true
       return fromPromise(
-        refreshToken()
-          .then((newToken) => {
-            if (!newToken) throw new Error('Token refresh returned no access token.')
-            processQueue(null, newToken)
-            return newToken
-          })
+        runRefresh(clientId)
           .catch((error) => {
-            processQueue(error)
             removeConfiguredToken()
+            void refresh?.clearTokens?.()
             clearAllStores()
             onLogout?.()
             throw error
-          })
-          .finally(() => {
-            isRefreshing = false
           })
       ).flatMap((accessToken) => {
         operation.setContext(({ headers = {} }) => ({
@@ -265,7 +276,7 @@ export const graphqlConfig = ({
     clients[clientId] = new ApolloClient({
       ...clientConfig,
       cache,
-      link: from([errorLink, authLink, httpLink]),
+      link: from([createErrorLink(clientId), authLink, httpLink]),
       ssrMode: server,
       // Apollo temporarily honors restored SSR data even when a generated
       // composable requests a force-fetch policy during initial hydration.
