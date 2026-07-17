@@ -11,7 +11,9 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
   const debouncedCodegen = () => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
-      runCodegen(options, root)
+      // Watch-mode failures are already logged by runCodegen; the next edit
+      // must remain retryable without creating an unhandled rejection.
+      void runCodegen(options, root).catch(() => undefined)
     }, 200)
   }
 
@@ -60,4 +62,3 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     },
   }
 }
-
