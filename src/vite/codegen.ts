@@ -13,10 +13,12 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
   const output = path.resolve(rootDir, outputRelative)
 
   // Normalize documents to an array
-  let documents = options.documents || ['src/**/*.{graphql,gql,ts}']
-  if (typeof documents === 'string') {
-    documents = [documents]
-  }
+  const configuredDocuments =
+    options.documents || ['src/**/*.{graphql,gql,ts}']
+  const documents =
+    typeof configuredDocuments === 'string'
+      ? [configuredDocuments]
+      : [...configuredDocuments]
 
   // CRITICAL FIX: Exclude the output file from the documents list
   // This prevents the "Not all operations have an unique name" error
@@ -56,6 +58,6 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
     console.log(`[vue-apollo] Generated GraphQL types at ${output}`)
   } catch (error) {
     console.error('[vue-apollo] Codegen failed:', error)
+    throw error
   }
 }
-
