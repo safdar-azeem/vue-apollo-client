@@ -7,9 +7,9 @@ import {
   type NormalizedCacheObject,
   from,
   fromPromise,
-} from '@apollo/client/core'
-import { onError } from '@apollo/client/link/error'
-import { setContext as setContextLink } from '@apollo/client/link/context'
+} from '@apollo/client/core/index.js'
+import { onError } from '@apollo/client/link/error/index.js'
+import { setContext as setContextLink } from '@apollo/client/link/context/index.js'
 import {
   getToken as getCookieToken,
   stashToken,
