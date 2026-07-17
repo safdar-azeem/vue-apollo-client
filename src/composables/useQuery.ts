@@ -20,7 +20,6 @@ import { useRoute } from 'vue-router'
 import { getGlobalConfig } from '../configStore'
 import { useLazyQuery } from './useLazyQuery'
 import { unwrapVariables } from '../utils/common'
-import { useSSRQuery } from './useSSRQuery'
 
 // Extend options
 import { OperationVariables } from '@apollo/client/core'
@@ -63,8 +62,8 @@ const pendingQueries = new Map<string, AbortController>()
 const DEFAULT_REFETCH_TIMEOUT = 10000
 
 // Clean up logic
-const isServer = typeof window === 'undefined'
-if (!isServer) {
+const browserRuntime = typeof window !== 'undefined'
+if (browserRuntime) {
   const CLEANUP_INTERVAL = 60000
   const MAX_INACTIVE_TIME = 300000
 
@@ -107,14 +106,24 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
     | (() => UseQueryOptions<TResult, TVariables>)
 ): UseQueryReturn<TResult, TVariables> => {
   const opts = typeof options === 'function' ? options() : unref(options) || {}
+  const apolloOptions = () => {
+    const resolved = typeof options === 'function' ? options() : unref(options) || {}
+    const {
+      ssr,
+      refetchOnUpdate: _refetchOnUpdate,
+      refetchTimeout: _refetchTimeout,
+      ...nativeOptions
+    } = resolved
+    return typeof window === 'undefined'
+      ? { ...nativeOptions, prefetch: ssr !== false }
+      : nativeOptions
+  }
 
-  if (isServer || opts.ssr) {
-    // This returns a promise-like structure in Nuxt impl, but composables must return synchronous objects.
-    // The Nuxt impl of useSSRQuery is async.
-    // If usage is `await useQuery(...)` it works.
-    // Standard useQuery is synchronous.
-    // If the user expects await, they must mark their component async.
-    return useSSRQuery(document, variables, options) as any
+  if (typeof window === 'undefined') {
+    // @vue/apollo-composable registers onServerPrefetch and lets Vue's server
+    // renderer await the initial result. Keeping the return shape synchronous
+    // means generated composables are identical in SPA, SSR, and hydration.
+    return apolloUseQuery<TResult, TVariables>(document, variables, apolloOptions as any)
   }
 
   const route = useRoute()
@@ -126,7 +135,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   if (!queryRefetchOnUpdate) {
     // @ts-ignore
-    return apolloUseQuery<TResult, TVariables>(document, variables, options)
+    return apolloUseQuery<TResult, TVariables>(document, variables, apolloOptions as any)
   }
 
   const reactiveVariables = reactive(
@@ -143,6 +152,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
     return JSON.stringify({
       key: operationName,
+      clientId: opts.clientId || 'default',
       variables: rawVariables,
     })
   }
@@ -151,7 +161,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   let currentQueryKey = getQueryKey()
 
-  let query = useLazyQuery<TResult, TVariables>(document, reactiveVariables, options as any)
+  let query = useLazyQuery<TResult, TVariables>(document, reactiveVariables, apolloOptions as any)
 
   if (!queryCache.has(currentQueryKey)) {
     queryCache.set(currentQueryKey, {
@@ -185,7 +195,7 @@ export const useQuery = <TResult = any, TVariables extends OperationVariables = 
 
   const hasRouteChanged = () => {
     const currentRouteSnapshot = JSON.stringify(route?.fullPath) // Handle undefined
-    const hasChanged = currentRouteSnapshot === cacheEntry.routeSnapshot
+    const hasChanged = currentRouteSnapshot !== cacheEntry.routeSnapshot
     if (hasChanged) {
       cacheEntry.routeSnapshot = currentRouteSnapshot
     }
