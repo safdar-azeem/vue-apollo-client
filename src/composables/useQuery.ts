@@ -22,8 +22,10 @@ import { useLazyQuery } from './useLazyQuery'
 import { unwrapVariables } from '../utils/common'
 
 // Extend options
-import { OperationVariables } from '@apollo/client/core'
-import { WatchQueryFetchPolicy } from '@apollo/client/core'
+import type {
+  OperationVariables,
+  WatchQueryFetchPolicy,
+} from '@apollo/client/core/index.js'
 
 export interface UseQueryOptions<
   TData = any,
