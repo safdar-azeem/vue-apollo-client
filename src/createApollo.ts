@@ -1,11 +1,37 @@
-import { App } from 'vue'
-import { provideApolloClients, ApolloClients } from '@vue/apollo-composable'
-import { VueApolloClientOptions } from './types'
+import type { App } from 'vue'
+import { ApolloClients } from '@vue/apollo-composable'
+import type { ApolloClient, NormalizedCacheObject } from '@apollo/client/core'
+import type {
+  VueApolloClientOptions,
+  VueApolloRuntimeOptions,
+  VueApolloState,
+} from './types'
 import { setGlobalConfig, setClients } from './configStore'
 import { graphqlConfig } from './utils/graphql.config'
 
-export const createApollo = (options: VueApolloClientOptions) => {
-  setGlobalConfig(options)
+export type VueApolloClients = Record<string, ApolloClient<NormalizedCacheObject>>
+
+export const extractApolloState = (clients: VueApolloClients): VueApolloState =>
+  Object.fromEntries(
+    Object.entries(clients).map(([clientId, client]) => [clientId, client.extract()])
+  )
+
+export const restoreApolloState = (
+  clients: VueApolloClients,
+  state: VueApolloState | null | undefined
+): void => {
+  if (!state) return
+  for (const [clientId, cacheState] of Object.entries(state)) {
+    clients[clientId]?.cache.restore(cacheState)
+  }
+}
+
+export const createApollo = (
+  options: VueApolloClientOptions,
+  runtime: VueApolloRuntimeOptions = {}
+) => {
+  const server = runtime.server ?? typeof window === 'undefined'
+  const registerGlobal = runtime.registerGlobal ?? !server
 
   const clients = graphqlConfig({
     endPoints: options.endPoints,
@@ -17,19 +43,27 @@ export const createApollo = (options: VueApolloClientOptions) => {
     apolloUploadConfig: options.apolloUploadConfig,
     refreshToken: options.refreshToken,
     onLogout: options.onLogout,
+    getToken: options.getToken,
+    clearToken: options.clearToken,
+    formatToken: options.formatToken,
+    runtime: { ...runtime, server },
   })
 
-  setClients(clients)
+  if (registerGlobal) {
+    setGlobalConfig(options)
+    setClients(clients)
+  }
 
   return {
     install(app: App) {
-      provideApolloClients(clients)
       app.provide(ApolloClients, clients)
-      // Provide individual clients if needed or just the map
-      // @vue/apollo-composable provideApolloClients does the heavy lifting for useQuery
-
-      // We can also expose clients globally if needed, but provide is best.
     },
     clients,
+    extract: () => extractApolloState(clients),
+    restore: (state: VueApolloState | null | undefined) =>
+      restoreApolloState(clients, state),
+    stop: () => {
+      for (const client of Object.values(clients)) client.stop()
+    },
   }
 }
