@@ -1,6 +1,6 @@
 {
   "name": "vue-apollo-client",
-  "version": "1.1.7",
+  "version": "1.2.0",
   "description": "Vue 3 Apollo Client with SSR, Codegen & Offline Support.",
   "author": "safdar-azeem",
   "license": "MIT",
@@ -8,18 +8,18 @@
   "files": [
     "dist"
   ],
-  "main": "./dist/vue-apollo-client.umd.js",
+  "main": "./dist/vue-apollo-client.cjs",
   "module": "./dist/vue-apollo-client.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/vue-apollo-client.mjs",
-      "require": "./dist/vue-apollo-client.js",
+      "require": "./dist/vue-apollo-client.cjs",
       "types": "./dist/index.d.ts"
     },
     "./vite": {
       "import": "./dist/vite.mjs",
-      "require": "./dist/vite.js",
+      "require": "./dist/vite.cjs",
       "types": "./dist/vite/index.d.ts"
     }
   },
@@ -30,37 +30,44 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
+    "test": "vitest run",
     "prepublishOnly": "npm run build",
     "release:patch": "npm version patch && npm publish",
     "release:minor": "npm version minor && npm publish",
     "release:major": "npm version major && npm publish"
   },
   "peerDependencies": {
+    "@apollo/client": "^3.10.0",
+    "@vue/apollo-composable": "^4.0.0",
+    "graphql": "^16.0.0",
+    "graphql-tag": "^2.12.0",
     "vue": "^3.3.0",
     "vue-router": "^4.0.0"
   },
   "dependencies": {
-    "@apollo/client": "^3.10.8",
     "@graphql-codegen/add": "^7.0.1",
     "@graphql-codegen/cli": "^7.1.2",
     "@graphql-codegen/typescript": "^6.0.2",
     "@graphql-codegen/typescript-operations": "^6.0.3",
     "@graphql-codegen/typescript-vue-apollo": "^5.0.1",
-    "@vue/apollo-composable": "^4.0.2",
     "apollo-upload-client": "^18.0.1",
-    "graphql": "^16.0.0",
-    "graphql-tag": "^2.12.6",
-    "js-cookie": "^3.0.5",
-    "vue-router": "^4.6.4"
+    "js-cookie": "^3.0.5"
   },
   "devDependencies": {
+    "@apollo/client": "^3.10.8",
     "@types/apollo-upload-client": "^18.0.0",
     "@types/js-cookie": "^3.0.6",
     "@types/node": "^20.14.9",
+    "@vue/apollo-composable": "^4.0.2",
+    "graphql": "^16.0.0",
+    "graphql-tag": "^2.12.6",
     "typescript": "^5.0.0",
     "vite": "^5.0.0",
     "vite-plugin-dts": "^4.5.4",
+    "vitest": "^4.1.5",
     "vue": "^3.3.0",
+    "@vue/server-renderer": "^3.3.0",
+    "vue-router": "^4.6.4",
     "vue-tsc": "^2.0.0"
   },
   "prettier": {
