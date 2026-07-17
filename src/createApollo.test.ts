@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createSSRApp, defineComponent, h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { gql } from '@apollo/client/core/index.js'
@@ -122,5 +122,19 @@ describe('request-scoped Apollo runtime', () => {
     })
     expect(seenHeaders[0]?.authorization).toBe('Bearer customer-token')
     browserApollo.stop()
+  })
+
+  it('stops every named client owned by the runtime', () => {
+    const runtime = createApollo({
+      endPoints: {
+        default: 'http://graphql.test/default',
+        reporting: 'http://graphql.test/reporting',
+      },
+    }, { server: true })
+    const defaultStop = vi.spyOn(runtime.clients.default, 'stop')
+    const reportingStop = vi.spyOn(runtime.clients.reporting, 'stop')
+    runtime.stop()
+    expect(defaultStop).toHaveBeenCalledTimes(1)
+    expect(reportingStop).toHaveBeenCalledTimes(1)
   })
 })
