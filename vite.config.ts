@@ -29,6 +29,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
+        /^node:/,
         /^@apollo\/client(?:\/.*)?$/,
         '@vue/apollo-composable',
         'vue',
