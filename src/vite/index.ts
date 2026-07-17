@@ -26,7 +26,7 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     // Prevent infinite loop by ignoring the output file itself
     if (file === output) return false
 
-    return file.endsWith('.graphql') || file.endsWith('.gql') || file.endsWith('.ts')
+    return file.endsWith('.graphql') || file.endsWith('.gql')
   }
 
   return {
