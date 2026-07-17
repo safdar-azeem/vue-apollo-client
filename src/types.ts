@@ -2,7 +2,7 @@ import type {
   ApolloClientOptions,
   InMemoryCacheConfig,
   NormalizedCacheObject,
-} from '@apollo/client/core'
+} from '@apollo/client/core/index.js'
 import type { ApolloUploadConfig } from './utils/graphql.config'
 
 export type VueApolloState = Record<string, NormalizedCacheObject>
