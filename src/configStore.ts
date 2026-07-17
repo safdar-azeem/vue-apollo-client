@@ -1,5 +1,5 @@
-import { ApolloClient } from '@apollo/client/core'
-import { VueApolloClientOptions } from './types'
+import type { ApolloClient } from '@apollo/client/core'
+import type { VueApolloClientOptions } from './types'
 
 let globalConfig: VueApolloClientOptions | null = null
 let globalClients: Record<string, ApolloClient<any>> | null = null
