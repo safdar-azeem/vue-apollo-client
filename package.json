@@ -31,7 +31,8 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "test": "vitest run",
-    "prepublishOnly": "npm run build",
+    "test:package": "node scripts/VueApolloPackageSmoke.mjs",
+    "prepublishOnly": "npm run build && npm run test:package",
     "release:patch": "npm version patch && npm publish",
     "release:minor": "npm version minor && npm publish",
     "release:major": "npm version major && npm publish"
