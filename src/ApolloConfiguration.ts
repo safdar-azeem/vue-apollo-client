@@ -77,11 +77,13 @@ export const defineApollo = <TPublicConfig = unknown>(
               ? { cookie: requestContext.request.cookie }
               : undefined,
           signal: server ? requestContext?.request?.signal : undefined,
-          initialState: !server
-            ? requestContext?.hydration?.read?.(
-                defaults.hydrationKey || 'apollo'
-              ) as any
-            : undefined,
+          // Single restore path. On the browser this restores the serialized
+          // SSR cache; on a server re-render pass it restores the cache carried
+          // forward by the host so the runtime resumes warm. On the first
+          // server pass the host has nothing to read, so this is undefined.
+          initialState: requestContext?.hydration?.read?.(
+            defaults.hydrationKey || 'apollo'
+          ) as any,
           fetch: resolved.fetch,
           requestTimeoutMs: resolved.requestTimeoutMs,
           hydrationKey: defaults.hydrationKey,
