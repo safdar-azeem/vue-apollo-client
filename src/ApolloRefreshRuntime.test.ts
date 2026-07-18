@@ -1,6 +1,8 @@
 import { gql } from '@apollo/client/core/index.js'
 import { describe, expect, it, vi } from 'vitest'
+import { createSSRApp } from 'vue'
 import { createApollo } from './createApollo'
+import { useMutation } from './composables/useMutation'
 
 const VALUE_QUERY = gql`
   query RefreshRuntimeValue($id: ID!) { runtimeValue(id: $id) }
@@ -86,6 +88,56 @@ describe('generated-document refresh runtime', () => {
     expect(refreshes.get('default')).toBe(1)
     expect(refreshes.get('reporting')).toBe(1)
     expect(persistTokens).toHaveBeenCalledTimes(2)
+    runtime.stop()
+  })
+
+  it('runs a generated refresh mutation composable inside the owning app context', async () => {
+    let token = 'expired'
+    let refreshCount = 0
+    const runtime = createApollo({
+      endPoints: { default: 'https://default.test/graphql' },
+      getToken: () => token,
+      refresh: {
+        useMutation: (options) => useMutation(REFRESH_MUTATION, options) as any,
+        getRefreshToken: () => 'refresh-token',
+        createVariables: (refreshToken) => ({ refreshToken }),
+        selectTokens: (data: any) => data?.refreshTokens,
+        persistTokens: (tokens) => {
+          token = tokens.token
+        },
+      },
+    }, {
+      server: false,
+      registerGlobal: false,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body || '{}'))
+        if (body.operationName === 'RefreshRuntimeToken') {
+          refreshCount += 1
+          return json({
+            data: { refreshTokens: { token: 'fresh', refreshToken: 'next' } },
+          })
+        }
+        if (token === 'expired') {
+          return json({
+            errors: [{
+              message: 'Unauthorized',
+              extensions: { code: 'UNAUTHENTICATED' },
+            }],
+          })
+        }
+        return json({ data: { runtimeValue: 'generated-refresh' } })
+      },
+    })
+    createSSRApp({ render: () => null }).use(runtime)
+
+    const result = await runtime.executeQuery({
+      document: VALUE_QUERY,
+      variables: { id: 'generated' },
+      fetchPolicy: 'network-only',
+    })
+
+    expect(result.data.runtimeValue).toBe('generated-refresh')
+    expect(refreshCount).toBe(1)
     runtime.stop()
   })
 })
