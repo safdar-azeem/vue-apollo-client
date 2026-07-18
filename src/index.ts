@@ -1,4 +1,5 @@
 export * from './createApollo'
+export * from './ApolloConfiguration'
 export * from './ApolloOperationRuntime'
 export * from './composables'
 export * from './ssrHydration'
