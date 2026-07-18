@@ -277,6 +277,54 @@ Use `ssr: true` for public data that should be included in server-rendered HTML.
 
 Use `ssr: false` for browser-only or private queries.
 
+#### `defineApollo` is the recommended entry point
+
+`defineApollo(resolver, defaults)` resolves server/browser mode, application
+identity, public config, request cookie, abort signal and the hydration key
+automatically from the SSR request context, and degrades to a plain SPA when no
+context is present. Key the resolver on `applicationId` to serve several auth
+boundaries from one configuration:
+
+```ts
+export default defineApollo(({ applicationId }) =>
+  applicationId === 'storefront'
+    ? { authBoundary: 'customer', endPoints: { default } /* … */ }
+    : { authBoundary: 'admin', endPoints: { default }, refresh: { /* … */ } }
+)
+```
+
+#### One hydration restore path (single source of truth)
+
+There is exactly one restore path and one derived hydration flag. When the
+runtime is constructed with the serialized cache (`initialState`, which
+`defineApollo` supplies from the host), the cache is restored at construction,
+`ssrForceFetchDelay` is set, and `runtime.hydrated` becomes `true` — together.
+Query composables serve the first render from cache (no duplicate network
+request) exactly when `hydrated` is true. The generic SSR host connection only
+restores as a backward-compatible fallback for a legacy `createApollo` runtime
+that received no `initialState`, and it marks `hydrated` so behaviour stays
+coherent.
+
+Every query composable — `useQuery`, `useLazyQuery`, `useMultiQuery` — follows
+the same three-mode contract: resolve on the server when SSR-enabled, serve from
+the restored cache on hydration without a duplicate request, and behave normally
+in a SPA. Mutations never execute during the server render. Operations register
+with the host's resolution contract so the renderer can await them regardless of
+which composable started them.
+
+#### Deprecations & migration
+
+The following remain exported for backward compatibility but are deprecated;
+nothing in the recommended `defineApollo` path depends on them, and none is used
+on the server (so concurrent SSR requests never share state):
+
+- `getGlobalConfig` / `getClients` / `configStore` — module-level global state.
+  Use the injected `VueApolloRuntime` (`useApolloRuntime()`) instead.
+- `loadApolloClients` — browser-only global provide. Install the runtime on the
+  owning app instead.
+- `createApollo`'s `refreshToken` callback and the global client registry — use
+  the `refresh` contract (a generated mutation composable) with `defineApollo`.
+
 Disabled generated queries can be used on demand without accessing a client:
 
 ```typescript
