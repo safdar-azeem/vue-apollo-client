@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { gql } from '@apollo/client/core/index.js'
-import { createApp, defineComponent, h } from 'vue'
+import { renderToString } from '@vue/server-renderer'
+import { createApp, createSSRApp, defineComponent, h } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApollo } from './createApollo'
 import { useQuery } from './composables/useQuery'
@@ -38,6 +39,19 @@ afterEach(() => {
 })
 
 describe('createApollo generic SSR host integration (browser)', () => {
+  it('honors an explicit server runtime even when a browser global exists', async () => {
+    const runtime = createApollo(
+      { endPoints: { default: 'https://graphql.test/query' } },
+      { server: true, fetch: async () => response('Explicit Server') }
+    )
+    const app = createSSRApp(Store)
+    app.use(runtime)
+
+    expect(await renderToString(app)).toContain('Explicit Server')
+    expect(JSON.stringify(runtime.extract())).toContain('Explicit Server')
+    runtime.stop()
+  })
+
   it('restores the host cache before the first query — no duplicate request', async () => {
     // A server runtime produces the serialized cache the host will carry.
     const seed = createApollo(
@@ -64,7 +78,7 @@ describe('createApollo generic SSR host integration (browser)', () => {
     app.use(browser)
     app.mount(element)
 
-    await vi.waitFor(() => expect(element.textContent).toBe('Aperture Store'))
+    expect(element.textContent).toBe('Aperture Store')
     expect(browserFetches).toBe(0)
     app.unmount()
     browser.stop()
