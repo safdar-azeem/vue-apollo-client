@@ -3,6 +3,22 @@ import { VueApolloViteOptions } from './types'
 import { runCodegen } from './codegen'
 import path from 'path'
 
+const APOLLO_DEDUPE = [
+  '@apollo/client',
+  '@vue/apollo-composable',
+  'graphql',
+  'graphql-tag',
+  'vue-apollo-client',
+]
+
+const APOLLO_SSR_NO_EXTERNAL: Array<string | RegExp> = [
+  ...APOLLO_DEDUPE,
+  'apollo-upload-client',
+  'optimism',
+  'ts-invariant',
+  /^@wry\//,
+]
+
 export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
   let root = process.cwd()
   let timer: any = null
@@ -31,6 +47,12 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
 
   return {
     name: 'vue-apollo-dts',
+    config() {
+      return {
+        resolve: { dedupe: APOLLO_DEDUPE },
+        ssr: { noExternal: APOLLO_SSR_NO_EXTERNAL },
+      }
+    },
     configResolved(config) {
       root = config.root
     },
