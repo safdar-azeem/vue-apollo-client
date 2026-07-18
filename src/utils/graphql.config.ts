@@ -47,6 +47,7 @@ interface ConfigProps {
   getToken?: () => string | null | undefined
   clearToken?: () => void
   formatToken?: (token: string) => string
+  getSessionId?: () => string | null | undefined
   runtime?: VueApolloRuntimeOptions
 }
 
@@ -95,6 +96,7 @@ export const graphqlConfig = ({
   getToken,
   clearToken,
   formatToken = (token) => token,
+  getSessionId,
   runtime = {},
 }: ConfigProps): Record<string, ApolloClient<NormalizedCacheObject>> => {
   const server = runtime.server ?? typeof window === 'undefined'
@@ -110,17 +112,25 @@ export const graphqlConfig = ({
 
   const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {}
   const refreshPromises = new Map<string, Promise<string>>()
-  const clearAllStores = () => {
-    for (const client of Object.values(clients)) {
+  let lastSessionId = server ? null : getSessionId?.() ?? null
+  const clearAllStores = async () => {
+    await Promise.all(Object.values(clients).map(async (client) => {
       try {
-        void client.clearStore().catch(() => undefined)
+        await client.clearStore()
       } catch {
         // Best-effort browser session cleanup.
       }
-    }
+    }))
   }
 
-  const authLink = setContextLink((operation, previousContext) => {
+  const authLink = setContextLink(async (operation, previousContext) => {
+    if (!server && getSessionId) {
+      const nextSessionId = getSessionId() ?? null
+      if (nextSessionId !== lastSessionId) {
+        lastSessionId = nextSessionId
+        await clearAllStores()
+      }
+    }
     const token = readToken() || ''
     const configuredContext = setContext?.({
       operationName: operation.operationName || '',
@@ -149,17 +159,37 @@ export const graphqlConfig = ({
       if (refresh) {
         const refreshTokenValue = refresh.getRefreshToken()
         if (!refreshTokenValue) throw new Error('No refresh token is available.')
-        const refreshClient = clients[refreshClientId]
-        if (!refreshClient) {
-          throw new Error(`Apollo refresh client "${refreshClientId}" is not installed.`)
+        let data: unknown
+        if (refresh.useMutation) {
+          const createMutation = () => refresh.useMutation!({
+            clientId: refreshClientId,
+            context: { vueApolloSkipRefresh: true },
+            errorPolicy: 'none',
+          })
+          const mutation = runtime.runWithContext
+            ? runtime.runWithContext(createMutation)
+            : createMutation()
+          const result = await mutation.mutate(
+            refresh.createVariables(refreshTokenValue),
+            { context: { vueApolloSkipRefresh: true }, errorPolicy: 'none' }
+          )
+          data = result?.data
+        } else if (refresh.document) {
+          const refreshClient = clients[refreshClientId]
+          if (!refreshClient) {
+            throw new Error(`Apollo refresh client "${refreshClientId}" is not installed.`)
+          }
+          const result = await refreshClient.mutate({
+            mutation: refresh.document,
+            variables: refresh.createVariables(refreshTokenValue),
+            errorPolicy: 'none',
+            context: { vueApolloSkipRefresh: true },
+          })
+          data = result.data
+        } else {
+          throw new Error('Apollo refresh requires a generated mutation composable.')
         }
-        const result = await refreshClient.mutate({
-          mutation: refresh.document,
-          variables: refresh.createVariables(refreshTokenValue),
-          errorPolicy: 'none',
-          context: { vueApolloSkipRefresh: true },
-        })
-        const tokens = refresh.selectTokens(result.data)
+        const tokens = refresh.selectTokens(data)
         if (!tokens?.token) throw new Error('Token refresh returned no access token.')
         await refresh.persistTokens(tokens)
         return tokens.token
@@ -188,7 +218,7 @@ export const graphqlConfig = ({
         if (networkAuthenticationFailure && !refresh && !refreshToken) {
           if (readToken() || refresh?.getRefreshToken()) {
             removeConfiguredToken()
-            clearAllStores()
+            void clearAllStores()
             onLogout?.()
           }
           return
@@ -221,7 +251,7 @@ export const graphqlConfig = ({
       if (authenticationFailure && !canRefresh) {
         removeConfiguredToken()
         void refresh?.clearTokens?.()
-        clearAllStores()
+        void clearAllStores()
         onLogout?.()
         return
       }
@@ -235,7 +265,7 @@ export const graphqlConfig = ({
           .catch((error) => {
             removeConfiguredToken()
             void refresh?.clearTokens?.()
-            clearAllStores()
+            void clearAllStores()
             onLogout?.()
             throw error
           })
