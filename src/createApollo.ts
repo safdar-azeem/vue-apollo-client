@@ -1,5 +1,5 @@
-import { inject, type App, type InjectionKey } from 'vue'
-import { ApolloClients } from '@vue/apollo-composable'
+import { hasInjectionContext, inject, type App, type InjectionKey } from 'vue'
+import { ApolloClients, provideApolloClients } from '@vue/apollo-composable'
 import type {
   ApolloQueryResult,
   FetchResult,
@@ -24,8 +24,11 @@ import { connectApolloToSsrHost } from './ssrHydration'
 
 export interface VueApolloRuntime {
   install: (app: App) => void
+  server: boolean
   clients: VueApolloClients
   options: VueApolloClientOptions
+  /** True when browser clients were constructed from serialized SSR state. */
+  hydrated: boolean
   offline: ApolloOfflineRuntime
   extract: () => VueApolloState
   restore: (state: VueApolloState | null | undefined) => void
@@ -36,14 +39,24 @@ export interface VueApolloRuntime {
     execution: VueApolloMutationExecution<TData, TVariables>
   ) => Promise<FetchResult<TData>>
   clearStore: (clientId?: string) => Promise<void>
+  runWithContext: <T>(callback: () => T) => T
   stop: () => void
 }
 
 export const VUE_APOLLO_RUNTIME: InjectionKey<VueApolloRuntime> =
-  Symbol('vue-apollo-client-runtime')
+  Symbol.for('vue-apollo:runtime') as InjectionKey<VueApolloRuntime>
+
+let activeBrowserRuntime: VueApolloRuntime | null = null
+
+export const prepareApolloComposable = (): void => {
+  if (typeof window === 'undefined' || hasInjectionContext()) return
+  if (activeBrowserRuntime) provideApolloClients(activeBrowserRuntime.clients)
+}
 
 export const useApolloRuntime = (): VueApolloRuntime => {
-  const runtime = inject(VUE_APOLLO_RUNTIME)
+  const runtime = hasInjectionContext()
+    ? inject(VUE_APOLLO_RUNTIME, null)
+    : activeBrowserRuntime
   if (!runtime) throw new Error('vue-apollo-client runtime is not installed.')
   return runtime
 }
@@ -70,6 +83,16 @@ export const createApollo = (
   const server = runtime.server ?? typeof window === 'undefined'
   const registerGlobal = runtime.registerGlobal ?? !server
   const hydrationKey = runtime.hydrationKey ?? 'apollo'
+  const hydrated = !server && Boolean(runtime.initialState)
+  let ownerApp: App | null = null
+  const runtimeOptions: VueApolloRuntimeOptions = {
+    ...runtime,
+    server,
+    fetch: runtime.fetch ?? options.fetch,
+    requestTimeoutMs: runtime.requestTimeoutMs ?? options.requestTimeoutMs,
+    runWithContext: <T>(callback: () => T): T =>
+      ownerApp ? ownerApp.runWithContext(callback) : callback(),
+  }
 
   const clients = graphqlConfig({
     endPoints: options.endPoints,
@@ -85,7 +108,8 @@ export const createApollo = (
     getToken: options.getToken,
     clearToken: options.clearToken,
     formatToken: options.formatToken,
-    runtime: { ...runtime, server },
+    getSessionId: options.getSessionId,
+    runtime: runtimeOptions,
   })
 
   if (registerGlobal) {
@@ -96,8 +120,16 @@ export const createApollo = (
   const offline = createApolloOfflineRuntime(options, clients)
   const apolloRuntime: VueApolloRuntime = {
     install(app: App) {
+      if (ownerApp && ownerApp !== app) {
+        throw new Error('An Apollo runtime cannot be installed on multiple Vue applications.')
+      }
+      ownerApp = app
       app.provide(ApolloClients, clients)
       app.provide(VUE_APOLLO_RUNTIME, apolloRuntime)
+      if (!server && registerGlobal) {
+        activeBrowserRuntime = apolloRuntime
+        provideApolloClients(clients)
+      }
       // Automatically integrate with a generic SSR hydration host when one is
       // present. On the server this contributes the extracted cache to the
       // shared hydration state; in the browser it restores that cache before
@@ -105,8 +137,10 @@ export const createApollo = (
       // request. In a plain SPA (no host) this is a no-op.
       connectApolloToSsrHost(app, apolloRuntime, hydrationKey)
     },
+    server,
     clients,
     options,
+    hydrated,
     offline,
     extract: () => extractApolloState(clients),
     restore: (state: VueApolloState | null | undefined) =>
@@ -122,9 +156,12 @@ export const createApollo = (
       }
       await Promise.all(Object.values(clients).map((client) => client.clearStore()))
     },
+    runWithContext: (callback) =>
+      ownerApp ? ownerApp.runWithContext(callback) : callback(),
     stop: () => {
       offline.stop()
       for (const client of Object.values(clients)) client.stop()
+      if (activeBrowserRuntime === apolloRuntime) activeBrowserRuntime = null
     },
   }
   return apolloRuntime
