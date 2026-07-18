@@ -149,6 +149,94 @@ describe('hydration query lifecycle', () => {
   })
 })
 
+describe('post-hydration navigation query lifecycle', () => {
+  it('fetches a query whose data was NOT in the SSR payload, even while the runtime stays hydrated', async () => {
+    // Seed ONLY the initially server-rendered route's data.
+    const seed = createApollo(
+      { endPoints: { default: 'http://mock.test/graphql' } },
+      { server: true, fetch: async () => storeResponse('product-route', 'Product Route Store') }
+    )
+    await seed.executeQuery({
+      document: STORE_QUERY,
+      variables: { domain: 'product-route' },
+      fetchPolicy: 'network-only',
+    })
+    const state = seed.extract()
+    seed.stop()
+
+    let networkDomains: string[] = []
+    const browser = createApollo(
+      { endPoints: { default: 'http://mock.test/graphql' } },
+      {
+        server: false,
+        registerGlobal: false,
+        initialState: state, // hydrated runtime for the whole session
+        fetch: (async (_input: any, init: any) => {
+          const body = JSON.parse(String(init?.body ?? '{}'))
+          const domain = String(body.variables?.domain ?? '')
+          networkDomains.push(domain)
+          return storeResponse(domain, `Fetched ${domain}`)
+        }) as typeof fetch,
+      }
+    )
+    expect(browser.hydrated).toBe(true)
+
+    // A NEW route's query (its data was never serialized) must hit the network,
+    // not starve on a cache-only policy just because the runtime is hydrated.
+    const element = document.createElement('div')
+    document.body.append(element)
+    const app = createApp(StoreProbe(() => 'home-section'))
+    app.use(browser)
+    app.mount(element)
+
+    expect(element.textContent).toBe('Loading storefront…')
+    await vi.waitFor(() => expect(element.textContent).toBe('Fetched home-section'))
+    expect(element.textContent).not.toContain('Store not found')
+    expect(networkDomains).toEqual(['home-section'])
+    app.unmount()
+    browser.stop()
+  })
+
+  it('still serves the hydrated route cache-only with no duplicate request', async () => {
+    const seed = createApollo(
+      { endPoints: { default: 'http://mock.test/graphql' } },
+      { server: true, fetch: async () => storeResponse('home', 'Home Store') }
+    )
+    await seed.executeQuery({
+      document: STORE_QUERY,
+      variables: { domain: 'home' },
+      fetchPolicy: 'network-only',
+    })
+    const state = seed.extract()
+    seed.stop()
+
+    let fetches = 0
+    const browser = createApollo(
+      { endPoints: { default: 'http://mock.test/graphql' } },
+      {
+        server: false,
+        registerGlobal: false,
+        initialState: state,
+        fetch: async () => {
+          fetches += 1
+          return storeResponse('home', 'Network Home')
+        },
+      }
+    )
+    const element = document.createElement('div')
+    document.body.append(element)
+    const app = createApp(StoreProbe(() => 'home'))
+    app.use(browser)
+    app.mount(element)
+
+    expect(element.textContent).toBe('Home Store')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(fetches).toBe(0)
+    app.unmount()
+    browser.stop()
+  })
+})
+
 describe('SPA navigation query lifecycle', () => {
   it('keeps loading (never a false not-found, never stale) across a reactive variable change', async () => {
     const deferred = new Map<string, (value: Response) => void>()
