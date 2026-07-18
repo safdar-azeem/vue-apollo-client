@@ -20,6 +20,7 @@ import {
   type VueApolloQueryExecution,
 } from './ApolloOperationRuntime'
 import { createApolloOfflineRuntime, type ApolloOfflineRuntime } from './ApolloOfflineRuntime'
+import { connectApolloToSsrHost } from './ssrHydration'
 
 export interface VueApolloRuntime {
   install: (app: App) => void
@@ -68,6 +69,7 @@ export const createApollo = (
 ): VueApolloRuntime => {
   const server = runtime.server ?? typeof window === 'undefined'
   const registerGlobal = runtime.registerGlobal ?? !server
+  const hydrationKey = runtime.hydrationKey ?? 'apollo'
 
   const clients = graphqlConfig({
     endPoints: options.endPoints,
@@ -96,6 +98,12 @@ export const createApollo = (
     install(app: App) {
       app.provide(ApolloClients, clients)
       app.provide(VUE_APOLLO_RUNTIME, apolloRuntime)
+      // Automatically integrate with a generic SSR hydration host when one is
+      // present. On the server this contributes the extracted cache to the
+      // shared hydration state; in the browser it restores that cache before
+      // any query composable is created, so hydration issues no duplicate
+      // request. In a plain SPA (no host) this is a no-op.
+      connectApolloToSsrHost(app, apolloRuntime, hydrationKey)
     },
     clients,
     options,
