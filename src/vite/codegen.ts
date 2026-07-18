@@ -92,9 +92,9 @@ export const runCodegen = async (options: VueApolloViteOptions, rootDir: string)
     }
 
     await generate(config, true)
-    console.log(`[vue-apollo] Generated GraphQL types at ${output}`)
+    console.log(`✓ GraphQL types generated → ${relativeOutputPath}`)
   } catch (error) {
-    console.error('[vue-apollo] Codegen failed:', error)
+    console.error('✗ GraphQL codegen failed', error)
     throw error
   }
 }
