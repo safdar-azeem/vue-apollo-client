@@ -312,6 +312,29 @@ in a SPA. Mutations never execute during the server render. Operations register
 with the host's resolution contract so the renderer can await them regardless of
 which composable started them.
 
+#### Query state lifecycle (loading vs. result vs. not-found)
+
+`useQuery` distinguishes "not yet completed for the current variables" from
+"completed for the current variables", so a component can safely treat a `null`
+result as a confirmed missing entity:
+
+- `loading` is `true` from the moment the query starts — or its variables change
+  — until it SETTLES for those variables. There is no false-negative window on a
+  fresh mount, an `enabled` flip, during SSR, or across a reactive variable
+  change. A component reading `!loading && !entity` therefore never renders a
+  false "not found".
+- `result` exposes ONLY data settled for the CURRENT variables. When the
+  variables change, the previous variables' data does not linger under the new
+  ones — no stale product under a new route.
+- A confirmed missing result (`{ entity: null }`) settles `loading` to `false`
+  with `result` present, so "not found" is selected only after completion.
+- A transport/GraphQL error settles into `error` (not a `null` result), keeping
+  error, loading, and not-found states distinct.
+
+On hydration the settled state is derived synchronously from the restored cache,
+so the first client render matches the server HTML (no mismatch, no duplicate
+request).
+
 #### Deprecations & migration
 
 The following remain exported for backward compatibility but are deprecated;
