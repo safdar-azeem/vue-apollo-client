@@ -9,6 +9,7 @@ import type {
   WatchQueryFetchPolicy,
 } from '@apollo/client/core/index.js'
 import { prepareApolloComposable, useApolloRuntime } from '../createApollo'
+import { resolveApolloServerResolution } from '../ApolloSsrRuntime'
 
 export type { UseQueryReturn } from '@vue/apollo-composable'
 
@@ -82,6 +83,12 @@ export const useQuery = <
     variables as any,
     nativeOptions as any
   )
+  // Captured during setup so the resolution contract is reachable from the
+  // async server-prefetch hook. Lets the renderer await this operation even
+  // though it was started outside its own component prefetch.
+  const serverResolution = owningRuntime?.server
+    ? resolveApolloServerResolution()
+    : null
   if (owningRuntime?.server && getCurrentInstance()) {
     onServerPrefetch(async () => {
       const resolvedOptions =
@@ -95,17 +102,19 @@ export const useQuery = <
       if (!client) throw new Error(`Apollo client "${clientId}" is not installed.`)
       query.loading.value = true
       query.error.value = null
+      const work = client.query<TResult, TVariables>({
+        query: resolveDocument(),
+        variables: resolveVariables() as TVariables,
+        fetchPolicy:
+          resolvedOptions.fetchPolicy === 'no-cache'
+            ? 'no-cache'
+            : 'network-only',
+        errorPolicy: resolvedOptions.errorPolicy,
+        context: resolvedOptions.context,
+      })
+      serverResolution?.track(work)
       try {
-        const result = await client.query<TResult, TVariables>({
-          query: resolveDocument(),
-          variables: resolveVariables() as TVariables,
-          fetchPolicy:
-            resolvedOptions.fetchPolicy === 'no-cache'
-              ? 'no-cache'
-              : 'network-only',
-          errorPolicy: resolvedOptions.errorPolicy,
-          context: resolvedOptions.context,
-        })
+        const result = await work
         query.result.value = result.data
       } catch (error) {
         query.error.value = error as any
