@@ -1,4 +1,4 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, effectScope, ref, type ComputedRef, type Ref } from 'vue'
 import {
   useApolloRuntime,
   type VueApolloRuntime,
@@ -6,7 +6,10 @@ import {
 import { getToken, removeToken } from './useCookies'
 
 export interface UseAuthOptions {
-  meQuery: any
+  /** Generated `useMeQuery`-style composable. */
+  useMeQuery?: (options?: any) => GeneratedAuthQuery
+  /** @deprecated Prefer `useMeQuery`; application code should not import documents. */
+  meQuery?: any
   meSelector?: (data: any) => any
   loginRoute?: string
   sessionExpiredReason?: string
@@ -16,6 +19,16 @@ export interface UseAuthOptions {
   getToken?: () => string | null | undefined
   clearToken?: () => void | Promise<void>
   navigate?: (path: string) => void | Promise<void>
+}
+
+export interface GeneratedAuthQuery {
+  result?: Ref<any>
+  loading?: Ref<boolean>
+  onResult: (callback: (result: { data?: any; loading?: boolean }) => void) => {
+    off: () => void
+  }
+  onError: (callback: (error: any) => void) => { off: () => void }
+  stop?: () => void
 }
 
 export interface AuthState {
@@ -37,6 +50,7 @@ const runtimeStates = new WeakMap<
   VueApolloRuntime,
   Map<string, AuthInternalState>
 >()
+const configuredStates = new Map<string, AuthInternalState>()
 let compatibilityRouter: any = null
 
 /** @deprecated Pass `navigate` to `createAuthRuntime` instead. */
@@ -64,20 +78,78 @@ const navigate = async (path: string, options: UseAuthOptions) => {
   window.location.assign(path)
 }
 
-export const createAuthRuntime = (
+const isApolloRuntime = (value: unknown): value is VueApolloRuntime =>
+  Boolean(value && typeof value === 'object' && 'executeQuery' in value)
+
+const executeGeneratedAuthQuery = async (
+  runtime: VueApolloRuntime,
+  createQuery: NonNullable<UseAuthOptions['useMeQuery']>
+): Promise<{ data?: any }> => {
+  const scope = effectScope()
+  const query = runtime.runWithContext(() =>
+    scope.run(() =>
+      createQuery({ fetchPolicy: 'network-only', errorPolicy: 'none' })
+    )!
+  )
+  try {
+    return await new Promise<{ data?: any }>((resolve, reject) => {
+      let settled = false
+      let resultSubscription = { off: () => undefined }
+      let errorSubscription = { off: () => undefined }
+      const settle = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        resultSubscription.off()
+        errorSubscription.off()
+        callback()
+      }
+      resultSubscription = query.onResult((result) => {
+        if (result.loading) return
+        settle(() => resolve({ data: result.data }))
+      })
+      errorSubscription = query.onError((error) =>
+        settle(() => reject(error))
+      )
+      queueMicrotask(() => {
+        if (!query.loading?.value && query.result?.value) {
+          settle(() => resolve({ data: query.result?.value }))
+        }
+      })
+    })
+  } finally {
+    query.stop?.()
+    scope.stop()
+  }
+}
+
+export function createAuthRuntime(options: UseAuthOptions): AuthState
+export function createAuthRuntime(
   runtime: VueApolloRuntime,
   options: UseAuthOptions
-): AuthState => {
-  if (!options?.meQuery) throw new Error('[useAuth] `meQuery` is required')
+): AuthState
+export function createAuthRuntime(
+  runtimeOrOptions: VueApolloRuntime | UseAuthOptions,
+  explicitOptions?: UseAuthOptions
+): AuthState {
+  const explicitRuntime = isApolloRuntime(runtimeOrOptions)
+    ? runtimeOrOptions
+    : null
+  const options = explicitRuntime ? explicitOptions! : runtimeOrOptions
+  if (!options?.useMeQuery && !options?.meQuery) {
+    throw new Error('[useAuth] `useMeQuery` is required')
+  }
   const clientId = options.clientId || 'default'
   const boundary = options.authBoundary || `${clientId}:${options.tokenKey || 'token'}`
-  let states = runtimeStates.get(runtime)
-  if (!states) {
-    states = new Map()
-    runtimeStates.set(runtime, states)
+  let states: Map<string, AuthInternalState>
+  if (explicitRuntime) {
+    states = runtimeStates.get(explicitRuntime) ?? new Map()
+    runtimeStates.set(explicitRuntime, states)
+  } else {
+    states = configuredStates
   }
   const existing = states.get(boundary)
   if (existing) return existing
+  const resolveRuntime = () => explicitRuntime || useApolloRuntime()
 
   const user = ref<any | null>(null)
   const state: AuthInternalState = {
@@ -103,7 +175,7 @@ export const createAuthRuntime = (
     state.tearingDown = true
     await clearToken()
     try {
-      await runtime.clearStore(clientId)
+      await resolveRuntime().clearStore(clientId)
     } catch {
       // Session teardown must continue even when cache cleanup fails.
     }
@@ -130,12 +202,16 @@ export const createAuthRuntime = (
     }
     if (state.tearingDown) state.tearingDown = false
     state.loading.value = true
-    const promise = runtime.executeQuery<any>({
-      clientId,
-      document: options.meQuery,
-      fetchPolicy: 'network-only',
-      errorPolicy: 'none',
-    }).then(async ({ data }) => {
+    const runtime = resolveRuntime()
+    const execution = options.useMeQuery
+      ? executeGeneratedAuthQuery(runtime, options.useMeQuery)
+      : runtime.executeQuery<any>({
+          clientId,
+          document: options.meQuery,
+          fetchPolicy: 'network-only',
+          errorPolicy: 'none',
+        })
+    const promise = execution.then(async ({ data }) => {
       const currentUser = options.meSelector
         ? options.meSelector(data)
         : (data as any)?.me
