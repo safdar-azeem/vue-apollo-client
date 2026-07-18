@@ -3,11 +3,12 @@ import {
   type UseQueryOptions as ApolloUseQueryOptions,
   type UseQueryReturn,
 } from '@vue/apollo-composable'
-import { unref, type Ref } from 'vue'
+import { getCurrentInstance, onServerPrefetch, unref, type Ref } from 'vue'
 import type {
   OperationVariables,
   WatchQueryFetchPolicy,
 } from '@apollo/client/core/index.js'
+import { prepareApolloComposable, useApolloRuntime } from '../createApollo'
 
 export type { UseQueryReturn } from '@vue/apollo-composable'
 
@@ -37,6 +38,20 @@ export const useQuery = <
     | Ref<UseQueryOptions<TResult, TVariables>>
     | (() => UseQueryOptions<TResult, TVariables>)
 ): UseQueryReturn<TResult, TVariables> => {
+  prepareApolloComposable()
+  let owningRuntime: ReturnType<typeof useApolloRuntime> | null = null
+  try {
+    owningRuntime = useApolloRuntime()
+  } catch {
+    // Compatibility: consumers may provide only @vue/apollo-composable clients.
+  }
+  const resolveDocument = () =>
+    typeof document === 'function' ? document() : unref(document)
+  const resolveVariables = () =>
+    typeof variables === 'function' ? variables() : unref(variables)
+  const hydratedVariables = owningRuntime?.hydrated
+    ? JSON.stringify(resolveVariables())
+    : null
   const nativeOptions = () => {
     const resolved = typeof options === 'function' ? options() : unref(options) || {}
     const {
@@ -45,14 +60,117 @@ export const useQuery = <
       refetchTimeout: _refetchTimeout,
       ...apolloOptions
     } = resolved
-    return typeof window === 'undefined'
-      ? { ...apolloOptions, prefetch: ssr !== false }
-      : apolloOptions
+    if (owningRuntime?.server ?? typeof window === 'undefined') {
+      return { ...apolloOptions, enabled: false, prefetch: false }
+    }
+    if (
+      owningRuntime?.hydrated &&
+      ssr !== false &&
+      JSON.stringify(resolveVariables()) === hydratedVariables
+    ) {
+      return {
+        ...apolloOptions,
+        fetchPolicy: 'cache-only' as const,
+        returnPartialData: true,
+      }
+    }
+    return apolloOptions
   }
 
-  return apolloUseQuery<TResult, TVariables>(
+  const query = apolloUseQuery<TResult, TVariables>(
     document,
     variables as any,
     nativeOptions as any
   )
+  if (owningRuntime?.server && getCurrentInstance()) {
+    onServerPrefetch(async () => {
+      const resolvedOptions =
+        typeof options === 'function' ? options() : unref(options) || {}
+      if (
+        resolvedOptions.ssr === false ||
+        unref(resolvedOptions.enabled as any) === false
+      ) return
+      const clientId = resolvedOptions.clientId || 'default'
+      const client = owningRuntime!.clients[clientId]
+      if (!client) throw new Error(`Apollo client "${clientId}" is not installed.`)
+      query.loading.value = true
+      query.error.value = null
+      try {
+        const result = await client.query<TResult, TVariables>({
+          query: resolveDocument(),
+          variables: resolveVariables() as TVariables,
+          fetchPolicy:
+            resolvedOptions.fetchPolicy === 'no-cache'
+              ? 'no-cache'
+              : 'network-only',
+          errorPolicy: resolvedOptions.errorPolicy,
+          context: resolvedOptions.context,
+        })
+        query.result.value = result.data
+      } catch (error) {
+        query.error.value = error as any
+        throw error
+      } finally {
+        query.loading.value = false
+      }
+    })
+  }
+  if (query.result.value === undefined && owningRuntime) {
+    try {
+      const resolvedOptions =
+        typeof options === 'function' ? options() : unref(options) || {}
+      const client = owningRuntime.clients[resolvedOptions.clientId || 'default']
+      const cached = client?.readQuery<TResult, TVariables>({
+        query: resolveDocument(),
+        variables: resolveVariables() as TVariables,
+        returnPartialData: true,
+      })
+      if (cached !== null && cached !== undefined) query.result.value = cached
+    } catch {
+      // Missing/partial cache data follows the native observable lifecycle.
+    }
+  }
+  const nativeRefetch = query.refetch
+  query.refetch = ((nextVariables?: TVariables) => {
+    const activeRequest = nativeRefetch(nextVariables)
+    if (activeRequest) return activeRequest
+
+    const runtime = owningRuntime || useApolloRuntime()
+    const resolvedOptions =
+      typeof options === 'function' ? options() : unref(options) || {}
+    const clientId = resolvedOptions.clientId || 'default'
+    const client = runtime.clients[clientId]
+    if (!client) throw new Error(`Apollo client "${clientId}" is not installed.`)
+    const resolvedVariables =
+      nextVariables ??
+      resolveVariables()
+    const requestedPolicy = resolvedOptions.fetchPolicy
+    const fetchPolicy =
+      requestedPolicy === 'cache-first' ||
+      requestedPolicy === 'network-only' ||
+      requestedPolicy === 'no-cache' ||
+      requestedPolicy === 'cache-only'
+        ? requestedPolicy
+        : 'network-only'
+
+    query.loading.value = true
+    query.error.value = null
+    return client.query<TResult, TVariables>({
+      query: resolveDocument(),
+      variables: resolvedVariables as TVariables,
+      fetchPolicy,
+      errorPolicy: resolvedOptions.errorPolicy,
+      context: resolvedOptions.context,
+    }).then((result) => {
+      query.result.value = result.data
+      return result
+    }).catch((error) => {
+      query.error.value = error
+      throw error
+    }).finally(() => {
+      query.loading.value = false
+    })
+  }) as typeof query.refetch
+
+  return query
 }
