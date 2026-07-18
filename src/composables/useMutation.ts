@@ -4,7 +4,7 @@ import {
   type UseMutationReturn,
 } from '@vue/apollo-composable'
 import type { OperationVariables } from '@apollo/client/core/index.js'
-import { useApolloRuntime } from '../createApollo'
+import { prepareApolloComposable, useApolloRuntime } from '../createApollo'
 
 export type { UseMutationOptions, UseMutationReturn } from '@vue/apollo-composable'
 
@@ -15,6 +15,7 @@ export const useMutation = <
   document: any,
   options?: UseMutationOptions<TResult, TVariables> | any
 ): UseMutationReturn<TResult, TVariables> => {
+  prepareApolloComposable()
   const runtime = useApolloRuntime()
   const mutation = apolloUseMutation<TResult, TVariables>(document, options)
   const originalMutate = mutation.mutate
