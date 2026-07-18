@@ -1,134 +1,306 @@
-# vue-apollo-client
+# Vue Apollo Client
 
-Package-managed Apollo for Vue 3 SPA, SSR, and hydration. Applications declare
-one configuration and use generated composables; the package owns client
-creation, request isolation, prefetch, cache transfer, restoration, cleanup,
-timeouts, token refresh, and Vite runtime identity.
+A Vue 3, Vite, Nuxt 3 Apollo Client featuring smart queries with caching and refetching, SSR support, offline mutations, and **zero-config code generation**.
+
+## Features
+
+- Apollo Client integration with Vue 3
+- Server-Side Rendering (SSR) support
+- GraphQL Code Generator integration
+- Offline support (mutations)
+- Multiple client support
+- File Upload support
+- Automatic token management
+- Automatic type generation for queries and mutations
+- Auto-imports for generated composables and types
+- Authentication support with cookie, token, and refresh token
+- Production-ready 📦
+
+## Installation
+
+```bash
+npm install vue-apollo-client
+# or
+yarn add vue-apollo-client
+```
+
+### Everything is set up for you: 🚀
+
+- No need to install Apollo Client or GraphQL codegen packages
+- All necessary dependencies will be automatically handled
+- Apollo Client configuration is done for you
+
+---
+
+> Don't forget to follow me on [GitHub](https://github.com/safdar-azeem)!
+
+---
 
 ## Setup
 
-Keep operations in `src/graphql/**/*.graphql` and enable code generation:
+### 1. Vite Plugin
 
-```ts
+To enable automatic codegen without manual configuration, add the Vite plugin. This will scan your `.graphql` files and generate typed composables automatically.
+
+```typescript
 // vite.config.ts
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
 import { vueApollo } from 'vue-apollo-client/vite'
 
-export default {
+export default defineConfig({
   plugins: [
+    vue(),
     vueApollo({
-      schema: process.env.VITE_GRAPHQL_ENDPOINT,
-      documents: ['src/graphql/**/*.{graphql,gql}'],
+      // Optional configuration
+      // documents: 'src/**/*.graphql',
+      // schema?: string | string[]
+      // schema: 'http://localhost:4000/graphql'
     }),
   ],
-}
-```
-
-Define one configuration. `defineApollo` returns a Vue plugin, not an Apollo
-client. It creates the internal runtime only when an owning Vue application is
-installed.
-
-```ts
-// src/config/ApolloConfiguration.ts
-import {
-  defineApollo,
-  getRefreshToken,
-  setToken,
-} from 'vue-apollo-client'
-import { useRefreshTokensMutation } from '@/graphql'
-
-export default defineApollo(({ applicationId }) => ({
-  endPoints: { default: import.meta.env.VITE_GRAPHQL_ENDPOINT },
-  authBoundary:
-    applicationId === 'storefront' ? 'storefront-customer' : 'admin',
-  requestTimeoutMs: 8_000,
-  refresh: {
-    useMutation: useRefreshTokensMutation,
-    getRefreshToken: () => getRefreshToken('auth_token'),
-    createVariables: (refreshToken) => ({ refreshToken }),
-    selectTokens: (data) => data?.refreshTokens,
-    persistTokens: ({ token, refreshToken }) =>
-      setToken({ key: 'auth_token', token, refreshToken }),
-  },
-}), { applicationId: 'admin' })
-```
-
-Install that same plugin in a SPA:
-
-```ts
-const app = createApp(App)
-app.use(apolloConfiguration)
-app.mount('#app')
-```
-
-An SSR host can install it as a generic application plugin. When the host
-provides the `vue-ssr` request and hydration contracts, the package
-automatically:
-
-- creates a fresh named-client set and cache for each request;
-- forwards only the host-filtered cookie header;
-- attaches the request abort signal and configured timeout;
-- waits for generated composables using Vue server prefetch;
-- extracts cache state after rendering;
-- restores it before browser component setup;
-- prevents duplicate initial hydration queries; and
-- stops request clients during host cleanup.
-
-No application code creates a server client, calls `executeQuery`, extracts a
-cache, serializes state, or restores hydration data.
-
-## GraphQL usage
-
-```graphql
-# src/graphql/queries/store.graphql
-query GetEcommerceStore($domain: String!) {
-  getEcommerceStore(domain: $domain) { id storeName }
-}
-```
-
-```ts
-import { useGetEcommerceStoreQuery } from '@/graphql'
-
-const storeQuery = useGetEcommerceStoreQuery(
-  { domain },
-  { ssr: true, fetchPolicy: 'cache-first' },
-)
-```
-
-Mutations use the generated composables in the same way:
-
-```ts
-const { mutate } = useCreateEcommerceOrderMutation()
-await mutate({ data })
-```
-
-Disabled generated queries can be used on demand without accessing a client:
-
-```ts
-const query = useGetServiceQuery({ id }, { enabled: false })
-const result = await query.refetch({ id })
-query.stop()
-```
-
-## Generated-composable auth
-
-```ts
-import { createAuthRuntime } from 'vue-apollo-client'
-import { useMeQuery } from '@/graphql'
-
-const auth = createAuthRuntime({
-  useMeQuery,
-  tokenKey: 'auth_token',
-  loginRoute: '/auth/login',
-  meSelector: (data) => data?.me,
 })
 ```
 
-`verify()` is single-flight. Authentication teardown clears tokens and the
-active application cache before navigation. A configured `getSessionId`
-automatically invalidates cached data when the browser session changes.
+Now, just run `npm run dev`. The plugin will:
 
-## Advanced compatibility API
+1. Scan for `.graphql` files.
+2. Generate typed hooks in `src/graphql/generated.ts`.
+3. Watch for changes and regenerate automatically.
 
-`createApollo` remains available for package integrations and legacy advanced
-hosts. Normal applications should use `defineApollo`; request runtimes and
-cache lifecycle should not be application-owned.
+### 2. App Initialization
+
+In your main entry file (e.g., `main.ts`), initialize the Apollo client:
+
+```typescript
+import { createApp } from 'vue'
+import { createApollo } from 'vue-apollo-client'
+import App from './App.vue'
+
+const app = createApp(App)
+
+const apollo = createApollo({
+  endPoints: {
+    default: 'http://localhost:4000/graphql',
+    // Add more endpoints as needed
+    // Example:
+    // api2: 'http://localhost:3000/graphql',
+    // const { result, loading, error, refetch } = useMeQuery({ client: 'api2' });
+  },
+  tokenKey: 'auth_token',
+  allowOffline: true,
+})
+
+app.use(apollo)
+app.mount('#app')
+```
+
+## Usage
+
+Use auto-generated composables in your Vue component.
+
+### 1. Define a query
+
+```graphql
+# src/graphql/user.query.graphql
+query GetUser {
+  me {
+    id
+    name
+  }
+}
+```
+
+### 2. Client-side Query
+
+For standard client-side fetching:
+
+```vue
+<script setup>
+import { useMeQuery } from './graphql/generated'
+
+const { result, loading, error, refetch } = useMeQuery()
+</script>
+```
+
+### 3. Server-side Query (SSR)
+
+If you are using this with SSR (e.g. `vite-ssr` or custom setup), you can await the query to fetch data on the server.
+
+```vue
+<script setup>
+import { useMeQuery } from './graphql/generated'
+
+// Await the result for SSR pre-fetching
+const { result, loading, error, refetch } = await useMeQuery()
+</script>
+
+<template>
+  <div v-if="result">Welcome, {{ result.me.name }}!</div>
+</template>
+```
+
+### Different Apollo Clients
+
+You can use different Apollo Clients for different queries.
+
+```vue
+<script setup>
+// with default client
+const { result, loading, error, refetch } = useMeQuery()
+// with api2 client
+const { result, loading, error, refetch } = useMeQuery({ client: 'api2' })
+</script>
+```
+
+### Dynamic Refetching Query
+
+You can pass reactive variables (`ref`, `reactive`, `computed`) to the query. The hook will automatically refetch when variables change.
+
+```vue
+<script setup>
+import { ref, computed } from 'vue'
+import { useGetUserQuery } from './graphql/generated'
+
+const userId = ref('1')
+
+// Automatically refetches when userId changes
+const { result } = useGetUserQuery({ id: userId })
+
+// Or with computed
+const { result: otherResult } = useGetUserQuery({ id: computed(() => '2') })
+</script>
+```
+
+### Multple Queries
+
+The `useMultiQuery` composable allows you to combine multiple GraphQL queries into a single loading/error state.
+**Note**: Unlike the Nuxt version, you must pass the generated query hooks code map (or object containing them) if you want to use them by key, or pass the functions directly.
+
+```typescript
+import { useMultiQuery } from 'vue-apollo-client'
+import * as queries from './graphql/generated' // Import all generated hooks
+
+const { result, loading, error, refetch } = useMultiQuery(
+  queries,
+  ['useGetUserQuery', 'useMeQuery'], // Keys must match exported names
+  {
+    /* shared variables */
+  },
+  {
+    /* options */
+  }
+)
+
+const users = result.value?.getUser
+const me = result.value?.me
+```
+
+### Mutations
+
+```vue
+<script setup lang="ts">
+import { useDeletePostMutation } from './graphql/generated'
+
+const { mutate, loading, error, onDone, onError } = useDeletePostMutation()
+
+const handleDelete = async (id: string) => {
+  await mutate({ id })
+  // Handle successful deletion
+}
+</script>
+```
+
+## Configuration Options
+
+Pass these options to `createApollo()`:
+
+| Option             | Type                        | Description                                                                                      | Default                                        |
+| ------------------ | --------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| endPoints          | `Record<string, string>`    | GraphQL endpoint URLs                                                                            | `{ default: 'http://localhost:4000/graphql' }` |
+| tokenKey           | `string`                    | Key for storing the authentication token in cookies                                              | `'token'`                                      |
+| tokenExpiration    | `number/Date`               | When the token expires.                                                                          | 30 days                                        |
+| memoryConfig       | `InMemoryCacheConfig`       | Memory cache config for Apollo Client                                                            | `{}`                                           |
+| useGETForQueries   | `boolean`                   | Use GET for queries                                                                              | `false`                                        |
+| apolloClientConfig | `ApolloClientOptions<any>`  | Apollo Client config                                                                             | `null`                                         |
+| apolloUploadConfig | `ApolloUploadClientOptions` | Apollo Upload Client config                                                                      | `{}`                                           |
+| refetchOnUpdate    | `boolean`                   | Smartly Refetch queries on component, page, or route changes.                                    | `false`                                        |
+| refetchTimeout     | `number`                    | Time in milliseconds to wait before refetching a query after a component, page, or route change. | `10000`                                        |
+| allowOffline       | `boolean`                   | Queue mutations when offline and sync when online.                                               | `false`                                        |
+| setContext         | `function`                  | method to setup context                                                                          | `({operationName, variables, token}) => any`   |
+
+## Functions
+
+| Function           | Description                                                   | Syntax                                                           |
+| ------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| setToken           | Sets the token and refresh token in the cookie                | `setToken(token)` or `setToken({ token, refreshToken })`         |
+| getToken           | Gets the token from the cookie                                | `getToken(key?)`                                                 |
+| getRefreshToken    | Gets the refresh token from the cookie                        | `getRefreshToken(key?)`                                          |
+| removeToken        | Removes the token and refresh token from the cookie           | `removeToken(key?, options?)`                                    |
+| loadApolloClients  | Initializes Apollo Clients for use outside components         | `loadApolloClients()`                                            |
+| useKeepCookieAlive | Keeps the auth token cookie alive by updating it periodically | `useKeepCookieAlive(debounceMs?: number)` (defaults to 10000 ms) |
+
+### Refresh Token Support
+
+The client automatically handles `UNAUTHENTICATED` (401) errors. If a request fails with a 401, it attempts to refresh the token using the stored refresh token.
+
+1. It calls a `refreshToken` mutation on your backend.
+2. If successful, it updates the cookies and retries the original request.
+3. If valid tokens are not returned, it logs the user out.
+
+To enable this, ensure your login flow saves the refresh token:
+
+```typescript
+import { setToken } from 'vue-apollo-client'
+
+// On login success
+setToken({
+  token: 'new-access-token',
+  refreshToken: 'new-refresh-token',
+})
+```
+
+---
+
+### Automatic Token Refresh
+
+If your API returns a `UNAUTHENTICATED` error, the client can attempt to refresh the token:
+
+```typescript
+const apollo = createApollo({
+  endPoints: { default: '...' },
+  refreshToken: async () => {
+    // Logic to call your refresh endpoint
+    const response = await fetch('/auth/refresh')
+    const data = await response.json()
+    return data.accessToken // Return the new token
+  },
+  onLogout: () => {
+    // Redirect to login page
+    window.location.href = '/login'
+  },
+})
+```
+
+---
+
+### Cookie Management & Security
+
+`vue-apollo-client` automatically sets secure defaults for cookies (`SameSite=None`, `Secure`, `Path=/`) when using `setToken`.
+
+```typescript
+import { setToken, useKeepCookieAlive } from 'vue-apollo-client'
+
+// Login
+setToken('jwt-token')
+
+// Monitor activity to keep session alive
+useKeepCookieAlive()
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License.
