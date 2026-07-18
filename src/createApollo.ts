@@ -27,8 +27,14 @@ export interface VueApolloRuntime {
   server: boolean
   clients: VueApolloClients
   options: VueApolloClientOptions
-  /** True when browser clients were constructed from serialized SSR state. */
+  /**
+   * True when this runtime's cache was restored from serialized SSR state — the
+   * single derived hydration flag. Query composables serve the first render
+   * from cache (no duplicate request) exactly when this is true.
+   */
   hydrated: boolean
+  /** Marks the runtime hydrated after a fallback restore. Internal. */
+  markHydrated: () => void
   offline: ApolloOfflineRuntime
   extract: () => VueApolloState
   restore: (state: VueApolloState | null | undefined) => void
@@ -83,7 +89,10 @@ export const createApollo = (
   const server = runtime.server ?? typeof window === 'undefined'
   const registerGlobal = runtime.registerGlobal ?? !server
   const hydrationKey = runtime.hydrationKey ?? 'apollo'
-  const hydrated = !server && Boolean(runtime.initialState)
+  // Single derived hydration state: true once the cache was restored, whether
+  // at construction from `initialState` (the recommended path) or via the
+  // legacy host fallback in `connectApolloToSsrHost`.
+  let hydratedState = !server && Boolean(runtime.initialState)
   let ownerApp: App | null = null
   const runtimeOptions: VueApolloRuntimeOptions = {
     ...runtime,
@@ -140,7 +149,12 @@ export const createApollo = (
     server,
     clients,
     options,
-    hydrated,
+    get hydrated() {
+      return hydratedState
+    },
+    markHydrated: () => {
+      hydratedState = true
+    },
     offline,
     extract: () => extractApolloState(clients),
     restore: (state: VueApolloState | null | undefined) =>
