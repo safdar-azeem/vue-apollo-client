@@ -3,6 +3,7 @@ import { UseQueryOptions } from './useQuery'
 import { ref, Ref, unref } from 'vue'
 import type { OperationVariables } from '@apollo/client/core/index.js'
 import { unwrapVariables } from '../utils/common'
+import { prepareApolloComposable } from '../createApollo'
 
 export interface UseLazyQueryReturn<
   TResult,
@@ -26,6 +27,7 @@ export const useLazyQuery = <
     | Ref<UseQueryOptions<TResult, TVariables>>
     | (() => UseQueryOptions<TResult, TVariables>)
 ): UseLazyQueryReturn<TResult, TVariables> => {
+  prepareApolloComposable()
   const lazyQuery = apolloUseLazyQuery(document, variables, () => {
     const opt = typeof options === 'function' ? options() : unref(options)
     return {
