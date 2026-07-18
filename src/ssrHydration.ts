@@ -1,5 +1,6 @@
 import { inject, type App } from 'vue'
 import type { VueApolloRuntime } from './createApollo'
+import type { VueApolloState } from './types'
 
 /**
  * Minimal shape of a generic SSR hydration host.
@@ -43,6 +44,13 @@ export const resolveSsrHydrationHost = (app: App): SsrHydrationHost | null =>
  * - Browser: restores that cache before any query composable is created, so
  *   the first render serves from cache and no duplicate network request runs.
  *
+ * Single restore path: when the runtime was already hydrated at construction
+ * from `initialState` (the recommended `defineApollo` path — which also sets
+ * `ssrForceFetchDelay` and the `hydrated` flag together), this does NOT restore
+ * a second time. The browser branch only restores as a backward-compatible
+ * fallback for a legacy `createApollo` runtime that received no `initialState`,
+ * and it marks `hydrated` so downstream composables behave coherently.
+ *
  * Called automatically by {@link createApollo}'s plugin during `app.use(...)`.
  */
 export const connectApolloToSsrHost = (
@@ -55,7 +63,20 @@ export const connectApolloToSsrHost = (
   if (host.server) {
     host.contribute(hydrationKey, () => runtime.extract())
     host.onDispose(() => runtime.stop())
-  } else {
-    runtime.restore(host.read(hydrationKey))
+    return
+  }
+  // Browser. The construction-time `initialState` restore is the single source
+  // of truth. Only fall back to restoring here when it did not run.
+  if (runtime.hydrated) return
+  const restored = host.read<VueApolloState>(hydrationKey)
+  if (restored === undefined || restored === null) return
+  runtime.restore(restored)
+  runtime.markHydrated()
+  if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {
+    console.warn(
+      '[vue-apollo-client] Restored SSR cache through the legacy host path. ' +
+        'Prefer defineApollo (or pass initialState to createApollo) so the ' +
+        'cache-only first render and ssrForceFetchDelay apply together.'
+    )
   }
 }
