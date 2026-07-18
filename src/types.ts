@@ -27,6 +27,12 @@ export interface VueApolloRuntimeOptions {
    * default to false so concurrent requests can never overwrite each other.
    */
   registerGlobal?: boolean
+  /**
+   * Key under which this runtime's extracted cache is contributed to (server)
+   * and restored from (browser) a generic SSR hydration host. Defaults to
+   * `apollo`. Give each named runtime a distinct key when installing several.
+   */
+  hydrationKey?: string
 }
 
 export interface VueApolloRefreshTokens {
