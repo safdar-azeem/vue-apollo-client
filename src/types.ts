@@ -33,6 +33,8 @@ export interface VueApolloRuntimeOptions {
    * `apollo`. Give each named runtime a distinct key when installing several.
    */
   hydrationKey?: string
+  /** Internal application context used to execute generated composables safely. */
+  runWithContext?: <T>(callback: () => T) => T
 }
 
 export interface VueApolloRefreshTokens {
@@ -44,7 +46,15 @@ export interface VueApolloRefreshContract<
   TData = unknown,
   TVariables extends OperationVariables = OperationVariables,
 > {
-  document: DocumentNode
+  /** Generated mutation composable. Preferred for application configuration. */
+  useMutation?: (options?: any) => {
+    mutate: (
+      variables?: TVariables,
+      options?: any
+    ) => Promise<{ data?: TData | null } | null | undefined>
+  }
+  /** @deprecated Prefer `useMutation` so application code never imports documents. */
+  document?: DocumentNode
   clientId?: string
   getRefreshToken: () => string | null | undefined
   createVariables: (refreshToken: string) => TVariables
@@ -59,6 +69,10 @@ export interface VueApolloClientOptions {
   /** Stable authentication boundary, for example `admin` or `storefront-customer`. */
   authBoundary?: string
   endPoints: Record<string, string>
+  /** Optional transport override, primarily for edge runtimes and tests. */
+  fetch?: typeof fetch
+  /** Per-operation transport timeout applied automatically in every runtime. */
+  requestTimeoutMs?: number
   tokenKey?: string
   tokenExpiration?: number | Date
   memoryConfig?: Partial<InMemoryCacheConfig>
@@ -70,7 +84,7 @@ export interface VueApolloClientOptions {
   allowOffline?: boolean
   /** Identifies the current session without persisting access tokens. */
   getSessionId?: () => string | null | undefined
-  /** Generated-document refresh contract owned and executed by this runtime. */
+  /** Generated-composable refresh contract owned and executed by this runtime. */
   refresh?: VueApolloRefreshContract<any, any>
   /** @deprecated Use `refresh` with a generated document. */
   refreshToken?: () => Promise<string | void | null>
