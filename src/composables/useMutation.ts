@@ -22,6 +22,17 @@ export const useMutation = <
   const clientId = options?.clientId || 'default'
 
   mutation.mutate = (async (variables?: TVariables, overrideOptions?: any) => {
+    // Mutations must never execute during the server render. A write triggered
+    // while producing HTML would mutate shared state for an anonymous request.
+    if (runtime.server) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(
+          '[vue-apollo-client] A mutation was invoked during server render and was skipped. Move writes to browser-only handlers (event handlers, onMounted).'
+        )
+      }
+      return { data: null } as any
+    }
+
     if (
       runtime.offline.enabled &&
       typeof navigator !== 'undefined' &&
