@@ -33,6 +33,9 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     }, 200)
   }
 
+  const toRelative = (file: string) =>
+    path.relative(root, file).split(path.sep).join('/')
+
   // Helper to check if a file should trigger codegen
   const shouldTriggerCodegen = (file: string) => {
     const output = options.output
@@ -60,13 +63,13 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     configureServer(server: ViteDevServer) {
       server.watcher.on('add', (file) => {
         if (shouldTriggerCodegen(file)) {
-          console.log(`[vue-apollo] File added: ${file}, running codegen...`)
+          console.log(`➜ GraphQL file added → ${toRelative(file)}`)
           debouncedCodegen()
         }
       })
       server.watcher.on('unlink', (file) => {
         if (shouldTriggerCodegen(file)) {
-          console.log(`[vue-apollo] File removed: ${file}, running codegen...`)
+          console.log(`➜ GraphQL file removed → ${toRelative(file)}`)
           debouncedCodegen()
         }
       })
@@ -78,7 +81,7 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     // Handle file updates (HMR)
     handleHotUpdate({ file }) {
       if (shouldTriggerCodegen(file)) {
-        console.log(`[vue-apollo] File changed: ${file}, running codegen...`)
+        console.log(`➜ GraphQL file changed → ${toRelative(file)}`)
         debouncedCodegen()
       }
     },
