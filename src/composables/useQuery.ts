@@ -76,7 +76,33 @@ export const useQuery = <
   // changes, the query is "pending for the new variables" until it settles.
   const currentSignature = () => stableSignature(resolveVariables())
 
-  const hydratedVariables = owningRuntime?.hydrated ? currentSignature() : null
+  // Complete cached data for the current variables at creation (browser only).
+  // Drives (a) the hydration cache-only decision and (b) the synchronous first
+  // settle. A MISS means the data was not part of the SSR payload — a query
+  // created after hydration for a route that was not server-rendered — so it
+  // must fetch normally instead of starving on a cache-only policy.
+  const readCompleteCache = (): TResult | undefined => {
+    if (!owningRuntime) return undefined
+    try {
+      const client = owningRuntime.clients[resolveOptions().clientId || 'default']
+      const cached = client?.readQuery<TResult, TVariables>({
+        query: resolveDocument(),
+        variables: resolveVariables() as TVariables,
+      })
+      return cached === null ? undefined : (cached as TResult | undefined)
+    } catch {
+      return undefined
+    }
+  }
+  const cachedAtCreation = server ? undefined : readCompleteCache()
+  // A genuine hydration cache HIT: the runtime was hydrated AND the restored
+  // cache already holds this exact query. Only then may the first render serve
+  // cache-only without a duplicate request. `owningRuntime.hydrated` alone stays
+  // true for the whole session, so it must never gate cache-only by itself.
+  const hydratedHit = Boolean(
+    owningRuntime?.hydrated && cachedAtCreation !== undefined
+  )
+  const hydratedVariables = hydratedHit ? currentSignature() : null
   const nativeOptions = () => {
     const resolved = resolveOptions()
     const {
@@ -89,7 +115,7 @@ export const useQuery = <
       return { ...apolloOptions, enabled: false, prefetch: false }
     }
     if (
-      owningRuntime?.hydrated &&
+      hydratedHit &&
       ssr !== false &&
       currentSignature() === hydratedVariables
     ) {
@@ -170,26 +196,14 @@ export const useQuery = <
   // If the native observable already produced data for the current variables
   // synchronously (a cache hit), it is settled now — this is what keeps a
   // hydrated render from flashing a loading/not-found state and mismatching the
-  // server HTML. Otherwise, try a COMPLETE-cache read. Partial data is NOT read
-  // here: a partial object would look like a confirmed-but-empty result and
-  // produce a false not-found. Only a complete result counts as settled.
+  // server HTML. Otherwise fall back to the complete cache read taken above.
+  // Only a COMPLETE result counts as settled: a partial object would look like a
+  // confirmed-but-empty result and produce a false not-found.
   if (query.result.value !== undefined) {
     markSettled()
-  } else if (owningRuntime) {
-    try {
-      const resolvedOptions = resolveOptions()
-      const client = owningRuntime.clients[resolvedOptions.clientId || 'default']
-      const cached = client?.readQuery<TResult, TVariables>({
-        query: resolveDocument(),
-        variables: resolveVariables() as TVariables,
-      })
-      if (cached !== null && cached !== undefined) {
-        query.result.value = cached
-        markSettled()
-      }
-    } catch {
-      // Missing/incomplete cache data follows the native observable lifecycle.
-    }
+  } else if (cachedAtCreation !== undefined) {
+    query.result.value = cachedAtCreation
+    markSettled()
   }
 
   // --- Robust loading & result ---------------------------------------------
