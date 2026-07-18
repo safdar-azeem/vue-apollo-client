@@ -137,4 +137,27 @@ describe('request-scoped Apollo runtime', () => {
     expect(defaultStop).toHaveBeenCalledTimes(1)
     expect(reportingStop).toHaveBeenCalledTimes(1)
   })
+
+  it('lets a disabled generated query refetch without manual client access', async () => {
+    const runtime = createApollo(
+      { endPoints: { default: 'http://graphql.test/query' } },
+      {
+        server: true,
+        fetch: async () => response('on-demand'),
+      }
+    )
+    const app = createSSRApp({ render: () => null })
+    app.use(runtime)
+    const query = app.runWithContext(() =>
+      useQuery<{ runtimeValue: string }>(VALUE_QUERY, undefined, {
+        enabled: false,
+      })
+    )
+
+    const result = await query.refetch()
+    expect(result?.data.runtimeValue).toBe('on-demand')
+    expect(query.result.value?.runtimeValue).toBe('on-demand')
+    query.stop()
+    runtime.stop()
+  })
 })
