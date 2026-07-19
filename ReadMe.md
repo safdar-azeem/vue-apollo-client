@@ -335,6 +335,13 @@ On hydration the settled state is derived synchronously from the restored cache,
 so the first client render matches the server HTML (no mismatch, no duplicate
 request).
 
+On the server the same synchronous cache read runs each render pass. When an SSR
+host re-renders (its resolution contract carrying the request cache forward), a
+query whose data is already warm settles at setup and does not re-fetch — so a
+parent-query → child-components → child-queries dependency, where child data is
+consumed indirectly through a store read by a sibling, resolves fully on the
+server across a bounded second pass with each operation executing exactly once.
+
 #### Deprecations & migration
 
 The following remain exported for backward compatibility but are deprecated;
