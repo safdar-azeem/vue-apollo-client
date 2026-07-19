@@ -76,11 +76,20 @@ export const useQuery = <
   // changes, the query is "pending for the new variables" until it settles.
   const currentSignature = () => stableSignature(resolveVariables())
 
-  // Complete cached data for the current variables at creation (browser only).
-  // Drives (a) the hydration cache-only decision and (b) the synchronous first
+  // Complete cached data for the current variables at creation.
+  //
+  // Browser: drives the hydration cache-only decision and the synchronous first
   // settle. A MISS means the data was not part of the SSR payload — a query
   // created after hydration for a route that was not server-rendered — so it
   // must fetch normally instead of starving on a cache-only policy.
+  //
+  // Server: on a re-render pass the request cache is already warm (the renderer
+  // carries it forward between passes), so reading it here settles the query
+  // SYNCHRONOUSLY at setup. That lets data reach consumers that read it
+  // indirectly — through an external store populated by this query, then read by
+  // a sibling component — which a single async prefetch pass cannot reach,
+  // because Vue does not block a sibling's render on an earlier sibling's
+  // `onServerPrefetch`.
   const readCompleteCache = (): TResult | undefined => {
     if (!owningRuntime) return undefined
     try {
@@ -94,7 +103,7 @@ export const useQuery = <
       return undefined
     }
   }
-  const cachedAtCreation = server ? undefined : readCompleteCache()
+  const cachedAtCreation = readCompleteCache()
   // A genuine hydration cache HIT: the runtime was hydrated AND the restored
   // cache already holds this exact query. Only then may the first render serve
   // cache-only without a duplicate request. `owningRuntime.hydrated` alone stays
@@ -165,6 +174,10 @@ export const useQuery = <
         markSettled()
         return
       }
+      // Already warm in the request cache (a re-render pass): the synchronous
+      // settle above populated the result, so there is nothing to fetch and no
+      // duplicate network request. Skipping also prevents a re-render loop.
+      if (cachedAtCreation !== undefined) return
       const clientId = resolvedOptions.clientId || 'default'
       const client = owningRuntime!.clients[clientId]
       if (!client) throw new Error(`Apollo client "${clientId}" is not installed.`)
