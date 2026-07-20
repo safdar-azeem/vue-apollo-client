@@ -1,6 +1,7 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { VueApolloViteOptions } from './types'
 import { runCodegen } from './codegen'
+import { shouldRunLiveCodegen } from './VueApolloViteCodegenGate'
 import path from 'path'
 
 const APOLLO_DEDUPE = [
@@ -21,10 +22,12 @@ const APOLLO_SSR_NO_EXTERNAL: Array<string | RegExp> = [
 
 export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
   let root = process.cwd()
+  let liveCodegen = true
   let timer: any = null
 
   // Debounce helper to prevent multiple rapid runs
   const debouncedCodegen = () => {
+    if (!liveCodegen) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       // Watch-mode failures are already logged by runCodegen; the next edit
@@ -58,6 +61,9 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     },
     configResolved(config) {
       root = config.root
+      // `vite build` (client + SSR) skips remote schema fetch / codegen.
+      // `vite` / `vite dev` keep the existing live codegen behaviour.
+      liveCodegen = shouldRunLiveCodegen(config.command)
     },
     // Hook into the server watcher to handle file additions/removals
     configureServer(server: ViteDevServer) {
@@ -75,7 +81,7 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
       })
     },
     async buildStart() {
-      // Initial run
+      if (!liveCodegen) return
       await runCodegen(options, root)
     },
     // Handle file updates (HMR)
