@@ -1,6 +1,7 @@
 export * from './createApollo'
 export * from './ApolloConfiguration'
 export * from './ApolloOperationRuntime'
+export * from './ApolloSessionRuntime'
 export * from './ApolloSsrRuntime'
 export * from './composables'
 export * from './ssrHydration'
