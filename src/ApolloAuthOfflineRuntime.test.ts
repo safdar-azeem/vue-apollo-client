@@ -48,7 +48,12 @@ describe('application-scoped auth and offline state', () => {
   })
 
   it('isolates offline queues and never replays into a different session', async () => {
-    let leftSession = 'left-user'
+    const jwtFor = (sub: string) => {
+      const header = btoa(JSON.stringify({ alg: 'none' }))
+      const payload = btoa(JSON.stringify({ sub }))
+      return `${header}.${payload}.sig`
+    }
+    let leftSession = jwtFor('left-user')
     const leftClient = { mutate: vi.fn(async () => ({ data: { save: true } })) }
     const rightClient = { mutate: vi.fn(async () => ({ data: { save: true } })) }
     const left = createApolloOfflineRuntime({
@@ -63,7 +68,7 @@ describe('application-scoped auth and offline state', () => {
       authBoundary: 'customer',
       endPoints: { default: 'https://right.test/graphql' },
       allowOffline: true,
-      getSessionId: () => 'right-user',
+      getSessionId: () => jwtFor('right-user'),
     }, { default: rightClient } as any)
 
     left.enqueue('default', SAVE_MUTATION, { value: 'left' })
@@ -73,7 +78,7 @@ describe('application-scoped auth and offline state', () => {
     expect(leftClient.mutate).not.toHaveBeenCalled()
     expect(localStorage.length).toBe(1)
 
-    leftSession = 'replacement-user'
+    leftSession = jwtFor('replacement-user')
     await left.sync()
     expect(leftClient.mutate).not.toHaveBeenCalled()
     expect(localStorage.length).toBe(0)
