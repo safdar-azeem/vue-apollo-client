@@ -20,6 +20,7 @@ import type {
   VueApolloRefreshContract,
   VueApolloRuntimeOptions,
 } from '../types'
+import { resolveApolloSessionCacheKey } from '../ApolloSessionRuntime'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -112,7 +113,9 @@ export const graphqlConfig = ({
 
   const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {}
   const refreshPromises = new Map<string, Promise<string>>()
-  let lastSessionId = server ? null : getSessionId?.() ?? null
+  let lastSessionKey = server
+    ? null
+    : resolveApolloSessionCacheKey(getSessionId?.() ?? null)
   const clearAllStores = async () => {
     await Promise.all(Object.values(clients).map(async (client) => {
       try {
@@ -125,9 +128,10 @@ export const graphqlConfig = ({
 
   const authLink = setContextLink(async (operation, previousContext) => {
     if (!server && getSessionId) {
-      const nextSessionId = getSessionId() ?? null
-      if (nextSessionId !== lastSessionId) {
-        lastSessionId = nextSessionId
+      // Compare stable session keys — never raw rotating access/refresh tokens.
+      const nextSessionKey = resolveApolloSessionCacheKey(getSessionId() ?? null)
+      if (nextSessionKey !== lastSessionKey) {
+        lastSessionKey = nextSessionKey
         await clearAllStores()
       }
     }
