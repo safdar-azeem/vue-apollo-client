@@ -1,6 +1,7 @@
 import { gql } from '@apollo/client/core/index.js'
 import type { DocumentNode } from 'graphql'
 import type { VueApolloClients } from './ApolloOperationRuntime'
+import { resolveApolloSessionCacheKey } from './ApolloSessionRuntime'
 import type { VueApolloClientOptions } from './types'
 
 interface QueuedMutation {
@@ -54,7 +55,8 @@ export const createApolloOfflineRuntime = (
   const syncing = new Map<string, Promise<void>>()
   const applicationId = options.applicationId || 'application'
   const authBoundary = options.authBoundary || options.tokenKey || 'anonymous'
-  const sessionId = () => options.getSessionId?.() || 'anonymous'
+  const sessionId = () =>
+    resolveApolloSessionCacheKey(options.getSessionId?.() ?? null) || 'anonymous'
   const queuePrefix = (clientId: string) => {
     const endpoint = options.endPoints[clientId] || ''
     return [
