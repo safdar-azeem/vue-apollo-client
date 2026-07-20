@@ -17,6 +17,7 @@ import type {
 } from '@apollo/client/core/index.js'
 import { prepareApolloComposable, useApolloRuntime } from '../createApollo'
 import { resolveApolloServerResolution } from '../ApolloSsrRuntime'
+import { isApolloStoreResetError } from '../ApolloSessionRuntime'
 
 export type { UseQueryReturn } from '@vue/apollo-composable'
 
@@ -162,7 +163,18 @@ export const useQuery = <
       markSettled()
     }
   })
-  query.onError?.(() => markSettled())
+  query.onError?.((error) => {
+    markSettled()
+    // Session cache clears (logout / real session switch) reject in-flight
+    // observables with Apollo invariant #42. Recover with a single refetch
+    // instead of leaving the UI stuck on a cryptic docs URL.
+    if (!server && isApolloStoreResetError(error)) {
+      query.error.value = null
+      void Promise.resolve().then(() => {
+        void query.refetch?.()
+      })
+    }
+  })
 
   const serverResolution = server ? resolveApolloServerResolution() : null
   if (server && getCurrentInstance()) {
