@@ -79,6 +79,17 @@ Now, just run `npm run dev`. The plugin will:
 2. Generate typed hooks in `src/graphql/generated.ts`.
 3. Watch for changes and regenerate automatically.
 
+#### Build vs codegen
+
+Live codegen (schema fetch + document generation) runs during `vite` / `vite dev`
+only. `vite build` — including SSR client and server builds — skips live codegen
+and uses the committed generated file so production image builds do not depend
+on a reachable API schema.
+
+If you need fresh types before a production deploy, regenerate them in
+development (or via an explicit GraphQL codegen script in your app), then commit
+`src/graphql/generated.ts`. Do not hand-edit `*.generated.*` files.
+
 ### 2. App Initialization
 
 Define one configuration with `defineApollo`. It returns a Vue plugin, not an
