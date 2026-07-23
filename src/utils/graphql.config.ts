@@ -125,14 +125,38 @@ export const graphqlConfig = ({
       }
     }))
   }
+  /**
+   * Isolate cached data when the stable session identity changes.
+   *
+   * Must NOT use `client.clearStore()` here: that cancels in-flight observables
+   * (Apollo invariant #42). The first authenticated request after login is the
+   * operation that detects signed-out → signed-in, so clearing via `clearStore`
+   * aborts the post-login `me` verify and leaves the router auth guard stuck
+   * (toast shows success, URL stays on /auth/login until a hard refresh — when
+   * `lastSessionKey` is already primed and no clear runs).
+   */
+  const resetSessionCaches = async () => {
+    await Promise.all(Object.values(clients).map(async (client) => {
+      try {
+        await client.cache.reset()
+      } catch {
+        // Best-effort browser session cleanup.
+      }
+    }))
+  }
 
   const authLink = setContextLink(async (operation, previousContext) => {
     if (!server && getSessionId) {
       // Compare stable session keys — never raw rotating access/refresh tokens.
       const nextSessionKey = resolveApolloSessionCacheKey(getSessionId() ?? null)
       if (nextSessionKey !== lastSessionKey) {
+        const previousSessionKey = lastSessionKey
         lastSessionKey = nextSessionKey
-        await clearAllStores()
+        // Signed-out → signed-in: nothing authenticated to isolate. Skipping the
+        // reset avoids racing the first authed op against its own cache purge.
+        if (previousSessionKey != null) {
+          await resetSessionCaches()
+        }
       }
     }
     const token = readToken() || ''
