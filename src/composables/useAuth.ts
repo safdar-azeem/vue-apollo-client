@@ -3,6 +3,7 @@ import {
   useApolloRuntime,
   type VueApolloRuntime,
 } from '../createApollo'
+import { isApolloStoreResetError } from '../ApolloSessionRuntime'
 import { getToken, removeToken } from './useCookies'
 
 export interface UseAuthOptions {
@@ -83,7 +84,8 @@ const isApolloRuntime = (value: unknown): value is VueApolloRuntime =>
 
 const executeGeneratedAuthQuery = async (
   runtime: VueApolloRuntime,
-  createQuery: NonNullable<UseAuthOptions['useMeQuery']>
+  createQuery: NonNullable<UseAuthOptions['useMeQuery']>,
+  attempt = 0,
 ): Promise<{ data?: any }> => {
   const scope = effectScope()
   const query = runtime.runWithContext(() =>
@@ -116,6 +118,13 @@ const executeGeneratedAuthQuery = async (
         }
       })
     })
+  } catch (error) {
+    // Session-cache isolation can still surface #42 to watchers; retry once so
+    // post-login `verify()` does not fail closed and block the dashboard redirect.
+    if (isApolloStoreResetError(error) && attempt < 1) {
+      return executeGeneratedAuthQuery(runtime, createQuery, attempt + 1)
+    }
+    throw error
   } finally {
     query.stop?.()
     scope.stop()
