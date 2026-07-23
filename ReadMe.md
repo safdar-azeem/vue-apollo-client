@@ -196,7 +196,7 @@ const ok = await verify()
 await logout()
 ```
 
-`verify()` is single-flight. Authentication teardown clears tokens and the active application cache before navigation. A configured `getSessionId` invalidates cached data when the **stable session identity** changes (JWT `sub`/`sid`, or signed-in ↔ signed-out for opaque tokens). Passing a raw rotating refresh token is safe — rotation no longer wipes in-flight queries.
+`verify()` is single-flight. Authentication teardown clears tokens and the active application cache before navigation. A configured `getSessionId` isolates cached data when the **stable session identity** changes between authenticated sessions (JWT `sub`/`sid`, or opaque signed-in buckets) via `cache.reset()` — not `clearStore()` — so the first post-login request is never aborted mid-flight. Signed-out → signed-in does not purge the cache (there is no prior authenticated data to isolate). Passing a raw rotating refresh token is safe — rotation no longer wipes in-flight queries.
 
 `useAuth(options)` resolves the installed runtime and calls `createAuthRuntime`.
 
