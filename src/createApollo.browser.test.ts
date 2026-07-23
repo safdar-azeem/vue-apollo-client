@@ -8,12 +8,21 @@ import { useQuery } from './composables/useQuery'
 const VALUE_QUERY = gql`
   query BrowserRuntimeValue($scope: String) { runtimeValue(scope: $scope) }
 `
+const ME_QUERY = gql`
+  query BrowserRuntimeMe { me { id } }
+`
 
 const response = (runtimeValue: string) =>
   new Response(JSON.stringify({ data: { runtimeValue } }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   })
+
+const jwtFor = (sub: string) => {
+  const header = btoa(JSON.stringify({ alg: 'none' }))
+  const payload = btoa(JSON.stringify({ sub }))
+  return `${header}.${payload}.sig`
+}
 
 describe('browser Apollo runtime', () => {
   it('restores generated-style query state before render without a duplicate request', async () => {
@@ -101,6 +110,37 @@ describe('browser Apollo runtime', () => {
     await vi.waitFor(() => expect(element.textContent).toBe('right'))
     expect(requests).toEqual(['left', 'right'])
     app.unmount()
+    runtime.stop()
+  })
+
+  it('does not abort the first authenticated query after signed-out → signed-in', async () => {
+    // Mirrors post-login verify(): token appears, then the first authed `me`
+    // request must complete. clearStore()-based session isolation used to cancel
+    // that in-flight op (Apollo #42) and leave the router guard stuck on /auth.
+    let session: string | null = null
+    const runtime = createApollo(
+      {
+        endPoints: { default: 'https://graphql.test/query' },
+        getSessionId: () => session,
+      },
+      {
+        server: false,
+        registerGlobal: false,
+        fetch: async () =>
+          new Response(JSON.stringify({ data: { me: { id: 'user-1' } } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      }
+    )
+
+    session = jwtFor('user-1')
+    const result = await runtime.executeQuery<{ me: { id: string } }>({
+      document: ME_QUERY,
+      fetchPolicy: 'network-only',
+    })
+
+    expect(result.data.me.id).toBe('user-1')
     runtime.stop()
   })
 
