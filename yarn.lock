@@ -2,7 +2,26 @@
 # yarn lockfile v1
 
 
-"@apollo/client@^3.10.8", "@apollo/client@^3.8.0":
+"@apollo/client@^3.10.0":
+  version "3.14.1"
+  resolved "https://registry.yarnpkg.com/@apollo/client/-/client-3.14.1.tgz#98931c8feea4a50c89c32ec0c8ffd04ccaa9416f"
+  integrity sha512-SgGX6E23JsZhUdG2anxiyHvEvvN6CUaI4ZfMsndZFeuHPXL3H0IsaiNAhLITSISbeyeYd+CBd9oERXQDdjXWZw==
+  dependencies:
+    "@graphql-typed-document-node/core" "^3.1.1"
+    "@wry/caches" "^1.0.0"
+    "@wry/equality" "^0.5.6"
+    "@wry/trie" "^0.5.0"
+    graphql-tag "^2.12.6"
+    hoist-non-react-statics "^3.3.2"
+    optimism "^0.18.0"
+    prop-types "^15.7.2"
+    rehackt "^0.1.0"
+    symbol-observable "^4.0.0"
+    ts-invariant "^0.10.3"
+    tslib "^2.3.0"
+    zen-observable-ts "^1.2.5"
+
+"@apollo/client@^3.8.0":
   version "3.14.0"
   resolved "https://registry.yarnpkg.com/@apollo/client/-/client-3.14.0.tgz#eda34b85ee03c6c0828ba21782419c8699feaf0b"
   integrity sha512-0YQKKRIxiMlIou+SekQqdCo0ZTHxOcES+K8vKB53cIDpwABNR0P0yRzPgsbgcj3zRJniD93S/ontsnZsCLZrxQ==
@@ -1757,7 +1776,7 @@
     path-browserify "^1.0.1"
     vscode-uri "^3.0.8"
 
-"@vue/apollo-composable@^4.0.2":
+"@vue/apollo-composable@^4.0.0":
   version "4.2.2"
   resolved "https://registry.yarnpkg.com/@vue/apollo-composable/-/apollo-composable-4.2.2.tgz#96278e420daa6fe66d54d04efb90e52ef49b306a"
   integrity sha512-5j+Jl07Gemz5vmuS8u/FfWtYgr04Rh0rjQ5HBv6DZDP7d+pvQfsCIRgX5adJoZJcznJLsQ0JupO/mZmRCBWGaQ==
@@ -1842,11 +1861,6 @@
   dependencies:
     de-indent "^1.0.2"
     he "^1.2.0"
-
-"@vue/devtools-api@^6.6.4":
-  version "6.6.4"
-  resolved "https://registry.yarnpkg.com/@vue/devtools-api/-/devtools-api-6.6.4.tgz#cbe97fe0162b365edc1dba80e173f90492535343"
-  integrity sha512-sGhTPMuXqZ1rVOk32RylztWkfXTRhuS7vgAKv0zjqk8gbsHkJ7xfFf+jbySxt7tWObEJwyKaHMikV/WGDiQm8g==
 
 "@vue/language-core@2.2.0":
   version "2.2.0"
@@ -2713,6 +2727,13 @@ graphql-tag@^2.11.0, graphql-tag@^2.12.6:
   version "2.12.6"
   resolved "https://registry.yarnpkg.com/graphql-tag/-/graphql-tag-2.12.6.tgz#d441a569c1d2537ef10ca3d1633b48725329b5f1"
   integrity sha512-FdSNcu2QQcWnM2VNvSCCDCVS5PpPqpzgFT8+GXzqJuoDd0CBncxCY278u4mhRO7tMgo2JjgJA5aZ+nWSQ/Z+xg==
+  dependencies:
+    tslib "^2.1.0"
+
+graphql-tag@^2.12.0:
+  version "2.12.7"
+  resolved "https://registry.yarnpkg.com/graphql-tag/-/graphql-tag-2.12.7.tgz#4c82de0af91679b1940f149819fc8351801ed130"
+  integrity sha512-xnE/NFzy+0eIesvAsREJZ284zTl/wYuBAvpsFSDhRGRdRHdnE90M21Q3xAWyYInb0J756c6x0pIQ62+vtvOs1Q==
   dependencies:
     tslib "^2.1.0"
 
@@ -4094,13 +4115,6 @@ vue-demi@^0.14.6:
   version "0.14.10"
   resolved "https://registry.yarnpkg.com/vue-demi/-/vue-demi-0.14.10.tgz#afc78de3d6f9e11bf78c55e8510ee12814522f04"
   integrity sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==
-
-vue-router@^4.6.4:
-  version "4.6.4"
-  resolved "https://registry.yarnpkg.com/vue-router/-/vue-router-4.6.4.tgz#a0a9cb9ef811a106d249e4bb9313d286718020d8"
-  integrity sha512-Hz9q5sa33Yhduglwz6g9skT8OBPii+4bFn88w6J+J4MfEo4KRRpmiNG/hHHkdbRFlLBOqxN8y8gf2Fb0MTUgVg==
-  dependencies:
-    "@vue/devtools-api" "^6.6.4"
 
 vue-tsc@^2.0.0:
   version "2.2.12"
