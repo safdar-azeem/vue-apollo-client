@@ -1,6 +1,7 @@
 import createUploadLink from 'apollo-upload-client/createUploadLink.mjs'
 import {
   ApolloClient,
+  ApolloLink,
   InMemoryCache,
   type ApolloClientOptions,
   type InMemoryCacheConfig,
@@ -243,7 +244,8 @@ export const graphqlConfig = ({
         statusCode === 401 || statusCode === 403
 
       if (networkError) {
-        if (networkAuthenticationFailure && !refresh && !refreshToken) {
+        const refreshConfig = refresh
+        if (networkAuthenticationFailure && !refreshConfig && !refreshToken) {
           if (readToken() || refresh?.getRefreshToken()) {
             removeConfiguredToken()
             void clearAllStores()
@@ -316,6 +318,8 @@ export const graphqlConfig = ({
       ...(apolloUploadConfig?.headers as Record<string, string> | undefined),
       ...runtime.headers,
     }
+    // @types/apollo-upload-client nests its own @apollo/client types; cast to
+    // the app's ApolloLink so `from()` does not see incompatible duplicates.
     const httpLink = createUploadLink({
       ...apolloUploadConfig,
       uri: endpoint,
@@ -323,7 +327,7 @@ export const graphqlConfig = ({
       useGETForQueries:
         useGETForQueries ?? apolloUploadConfig?.useGETForQueries,
       headers: uploadHeaders,
-    })
+    }) as unknown as ApolloLink
     const cache = new InMemoryCache(memoryConfig)
     const initialCache = runtime.initialState?.[clientId]
     if (initialCache) cache.restore(initialCache)
