@@ -33,7 +33,6 @@ export default defineConfig({
         /^@apollo\/client(?:\/.*)?$/,
         '@vue/apollo-composable',
         'vue',
-        'vue-router',
         'graphql',
         'graphql-tag',
         '@graphql-codegen/cli',
@@ -45,7 +44,6 @@ export default defineConfig({
       output: {
         globals: {
           vue: 'Vue',
-          'vue-router': 'VueRouter',
           graphql: 'GraphQL',
         },
       },
