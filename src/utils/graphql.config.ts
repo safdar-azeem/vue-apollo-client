@@ -244,8 +244,7 @@ export const graphqlConfig = ({
         statusCode === 401 || statusCode === 403
 
       if (networkError) {
-        const refreshConfig = refresh
-        if (networkAuthenticationFailure && !refreshConfig && !refreshToken) {
+        if (networkAuthenticationFailure && !refresh?.getRefreshToken() && !refreshToken) {
           if (readToken() || refresh?.getRefreshToken()) {
             removeConfiguredToken()
             void clearAllStores()
