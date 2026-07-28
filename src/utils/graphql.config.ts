@@ -269,9 +269,21 @@ export const graphqlConfig = ({
         }
       }
 
+      const workspaceUnavailable = graphQLErrors?.some(
+        (error) => error.extensions?.code === 'WORKSPACE_UNAVAILABLE'
+      )
+      if (workspaceUnavailable) {
+        removeConfiguredToken()
+        void refresh?.clearTokens?.()
+        void clearAllStores()
+        onLogout?.()
+        return
+      }
+
       const authenticationFailure = graphQLErrors?.some(
         (error) =>
           error.extensions?.code === 'UNAUTHENTICATED' ||
+          error.extensions?.code === 'FORBIDDEN' ||
           error.message === 'Unauthorized'
       ) || networkAuthenticationFailure
       const canRefresh = refresh
