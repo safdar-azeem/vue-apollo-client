@@ -64,6 +64,7 @@ const isAuthError = (error: any): boolean => {
   if (graphQLErrors.some((entry: any) =>
     entry?.extensions?.code === 'UNAUTHENTICATED' ||
     entry?.extensions?.code === 'FORBIDDEN' ||
+    entry?.extensions?.code === 'WORKSPACE_UNAVAILABLE' ||
     /unauthori[sz]ed/i.test(entry?.message ?? '') ||
     /user not found/i.test(entry?.message ?? '')
   )) return true
