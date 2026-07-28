@@ -96,8 +96,8 @@ const executeGeneratedAuthQuery = async (
   try {
     return await new Promise<{ data?: any }>((resolve, reject) => {
       let settled = false
-      let resultSubscription = { off: () => undefined }
-      let errorSubscription = { off: () => undefined }
+      let resultSubscription: { off: () => void } = { off: () => {} }
+      let errorSubscription: { off: () => void } = { off: () => {} }
       const settle = (callback: () => void) => {
         if (settled) return
         settled = true
@@ -140,10 +140,15 @@ export function createAuthRuntime(
   runtimeOrOptions: VueApolloRuntime | UseAuthOptions,
   explicitOptions?: UseAuthOptions
 ): AuthState {
-  const explicitRuntime = isApolloRuntime(runtimeOrOptions)
-    ? runtimeOrOptions
-    : null
-  const options = explicitRuntime ? explicitOptions! : runtimeOrOptions
+  let explicitRuntime: VueApolloRuntime | null
+  let options: UseAuthOptions
+  if (isApolloRuntime(runtimeOrOptions)) {
+    explicitRuntime = runtimeOrOptions
+    options = explicitOptions!
+  } else {
+    explicitRuntime = null
+    options = runtimeOrOptions
+  }
   if (!options?.useMeQuery && !options?.meQuery) {
     throw new Error('[useAuth] `useMeQuery` is required')
   }
