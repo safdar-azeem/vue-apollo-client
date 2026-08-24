@@ -18,7 +18,7 @@ timeouts, token refresh, and Vite runtime identity.
 - Automatic token management
 - **`defineApollo` configuration plugin** — one config for SPA, SSR, and hydration
 - **Built-in auth runtime** — `createAuthRuntime({ useMeQuery })` / `useAuth` handles the full session lifecycle (verify / logout / auto SPA-navigate on auth failure)
-- **Auto-detected cookie options** — `setToken` / `removeToken` pick the right `secure` / `sameSite` / `domain` for the current environment
+- **Safe token cookies** — host-only by default, with explicit shared-subdomain cookie configuration
 - Automatic type generation for queries and mutations
 - Auto-imports for generated composables and types
 - Authentication support with cookie, token, and refresh token
@@ -38,7 +38,7 @@ yarn add vue-apollo-client
 
 - GraphQL codegen is handled by the Vite plugin
 - Apollo Client runtime configuration is done for you via `defineApollo`
-- Cookie attributes (domain, secure, sameSite) are auto-detected
+- Cookie attributes use safe host-only defaults; shared-subdomain auth is explicit
 - Auth flow (verify / logout / session expiry) is built in
 - SSR request isolation, cache transfer, and hydration restore are package-owned
 
@@ -63,12 +63,7 @@ import { vueApollo } from 'vue-apollo-client/vite'
 export default defineConfig({
   plugins: [
     vue(),
-    vueApollo({
-      // Optional configuration
-      // documents: ['src/graphql/**/*.{graphql,gql}'],
-      // schema: process.env.VITE_GRAPHQL_ENDPOINT,
-      // schema: 'http://localhost:4000/graphql'
-    }),
+    vueApollo(),
   ],
 })
 ```
@@ -78,6 +73,13 @@ Now, just run `npm run dev`. The plugin will:
 1. Scan for `.graphql` files.
 2. Generate typed hooks in `src/graphql/generated.ts`.
 3. Watch for changes and regenerate automatically.
+
+With `vueApollo()` the schema follows this convention order: explicit
+`schema`, `VITE_GRAPHQL_ENDPOINT`, `VITE_API_URL + '/graphql'`, then
+`http://localhost:4000/graphql`. The default documents glob is
+`src/**/*.{graphql,gql}` and the default output is
+`src/graphql/generated.ts`; pass explicit values only when an application
+needs to override them.
 
 #### Build vs codegen
 
@@ -98,40 +100,26 @@ application is installed.
 
 ```typescript
 // src/config/ApolloConfiguration.ts
-import {
-  defineApollo,
-  getRefreshToken,
-  setToken,
-  removeToken,
-} from 'vue-apollo-client'
+import { defineApollo } from 'vue-apollo-client'
 import { useRefreshTokensMutation } from '@/graphql'
 
-export default defineApollo(
-  ({ applicationId }) => ({
-    endPoints: {
-      default: import.meta.env.VITE_GRAPHQL_ENDPOINT,
-      // Add more endpoints as needed
-      // api2: 'http://localhost:3000/graphql',
-      // const { result, loading, error, refetch } = useMeQuery({}, { clientId: 'api2' })
-    },
-    authBoundary:
-      applicationId === 'website' ? 'website-customer' : 'admin',
-    tokenKey: 'auth_token',
-    allowOffline: true,
-    requestTimeoutMs: 8_000,
-    refresh: {
-      useMutation: useRefreshTokensMutation,
-      getRefreshToken: () => getRefreshToken('auth_token'),
-      createVariables: (refreshToken) => ({ refreshToken }),
-      selectTokens: (data) => data?.refreshTokens,
-      persistTokens: ({ token, refreshToken }) =>
-        setToken({ key: 'auth_token', token, refreshToken }),
-      clearTokens: () => removeToken('auth_token'),
-    },
-  }),
-  { applicationId: 'admin' }
-)
+export default defineApollo({
+  endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
+  authBoundary: 'admin',
+  tokenKey: 'auth_token',
+  allowOffline: true,
+  requestTimeoutMs: 8_000,
+  refresh: {
+    useMutation: useRefreshTokensMutation,
+    createVariables: (refreshToken) => ({ refreshToken }),
+    selectTokens: (data) => data?.refreshTokens,
+  },
+})
 ```
+
+Use `endPoints: { default, secondary }` only when the application actually
+needs multiple named Apollo clients. The normal `endpoint` form is normalized
+to the same `default` client internally.
 
 Install that same plugin in a SPA:
 
@@ -196,7 +184,7 @@ const ok = await verify()
 await logout()
 ```
 
-`verify()` is single-flight. Authentication teardown clears tokens and the active application cache before navigation. A configured `getSessionId` isolates cached data when the **stable session identity** changes between authenticated sessions (JWT `sub`/`sid`, or opaque signed-in buckets) via `cache.reset()` — not `clearStore()` — so the first post-login request is never aborted mid-flight. Signed-out → signed-in does not purge the cache (there is no prior authenticated data to isolate). Passing a raw rotating refresh token is safe — rotation no longer wipes in-flight queries.
+`verify()` is single-flight. Authentication teardown clears tokens and the active application cache before navigation. The configured token store, or an explicit `getSessionId`, isolates cached data when the **stable session identity** changes between authenticated sessions (JWT `sub`/`sid`, or opaque signed-in buckets) via `cache.reset()` — not `clearStore()` — so the first post-login request is never aborted mid-flight. Signed-out → signed-in does not purge the cache (there is no prior authenticated data to isolate). Passing a raw rotating refresh token is safe — rotation no longer wipes in-flight queries.
 
 `useAuth(options)` resolves the installed runtime and calls `createAuthRuntime`.
 
@@ -299,8 +287,8 @@ boundaries from one configuration:
 ```ts
 export default defineApollo(({ applicationId }) =>
   applicationId === 'storefront'
-    ? { authBoundary: 'customer', endPoints: { default } /* … */ }
-    : { authBoundary: 'admin', endPoints: { default }, refresh: { /* … */ } }
+    ? { authBoundary: 'customer', endpoint: default /* … */ }
+    : { authBoundary: 'admin', endpoint: default, refresh: { /* … */ } }
 )
 ```
 
@@ -502,16 +490,28 @@ const handleDelete = async (id: string) => {
 </script>
 ```
 
+## Progressive API
+
+Normal applications should stay at Level 1. Advanced runtime and integration
+APIs remain available for package authors and specialized hosts.
+
+- **Level 1 — application:** `defineApollo`, `useQuery`, `useMutation`, `useAuth`, `setToken`, `getToken`, `removeToken`
+- **Level 2 — advanced configuration:** named clients, custom token stores, and offline customization
+- **Level 3 — runtime/integration:** `createApollo`, direct operation execution, and hydration host contracts
+- **Level 4 — Vite:** `vueApollo`
+
 ## Configuration Options
 
 Pass these options to `defineApollo()` (or to `createApollo()` for advanced hosts):
 
 | Option             | Type                        | Description                                                                                      | Default                                        |
 | ------------------ | --------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| endPoints          | `Record<string, string>`    | GraphQL endpoint URLs                                                                            | `{ default: 'http://localhost:4000/graphql' }` |
+| endpoint           | `string`                    | Normal single GraphQL endpoint                                                                    | `'http://localhost:4000/graphql'`               |
+| endPoints          | `Record<string, string>`    | Advanced named-client endpoint URLs                                                               | derived from `endpoint`                         |
 | applicationId      | `string`                    | Stable Vue application identity                                                                  | —                                              |
 | authBoundary       | `string`                    | Stable authentication boundary (for example `admin`)                                             | —                                              |
 | tokenKey           | `string`                    | Key for storing the authentication token in cookies                                              | `'token'`                                      |
+| tokenCookie        | `object`                    | Explicit `domain`, `path`, `secure`, and `sameSite` for all token cookies                       | host-only defaults                              |
 | tokenExpiration    | `number/Date`               | When the token expires.                                                                          | 30 days                                        |
 | requestTimeoutMs   | `number`                    | Per-operation transport timeout                                                                  | `undefined`                                    |
 | memoryConfig       | `InMemoryCacheConfig`       | Memory cache config for Apollo Client                                                            | `{}`                                           |
@@ -519,12 +519,12 @@ Pass these options to `defineApollo()` (or to `createApollo()` for advanced host
 | apolloClientConfig | `ApolloClientOptions<any>`  | Apollo Client config                                                                             | `null`                                         |
 | apolloUploadConfig | `ApolloUploadClientOptions` | Apollo Upload Client config                                                                      | `{}`                                           |
 | allowOffline       | `boolean`                   | Queue mutations when offline and sync when online.                                               | `false`                                        |
-| getSessionId       | `function`                  | Identifies the current session for cache / offline isolation                                     | `undefined`                                    |
+| getSessionId       | `function`                  | Custom session identity; otherwise derived from the configured token store                     | token store                                    |
 | getToken           | `function`                  | Override cookie token lookup                                                                     | `undefined`                                    |
 | clearToken         | `function`                  | Override token removal when authentication becomes invalid                                       | `undefined`                                    |
 | formatToken        | `function`                  | Format the Authorization header value                                                            | identity                                       |
 | setContext         | `function`                  | method to setup context                                                                          | `({operationName, variables, token}) => any`   |
-| refresh            | `object`                    | Generated-composable refresh contract (`useMutation`, `getRefreshToken`, …)                      | `undefined`                                    |
+| refresh            | `object`                    | Schema-specific generated mutation mapping; lookup, persistence, retry, and cleanup are automatic | `undefined`                                   |
 | refreshToken       | `function`                  | **Deprecated.** Prefer `refresh` with a generated mutation.                                      | `undefined`                                    |
 | refetchOnUpdate    | `boolean`                   | **Deprecated.** Prefer Apollo fetch policies or explicit `refetch()`.                            | `false`                                        |
 | refetchTimeout     | `number`                    | **Deprecated.** Prefer Apollo fetch policies or explicit `refetch()`.                            | `10000`                                        |
@@ -536,11 +536,11 @@ Pass these options to `defineApollo()` (or to `createApollo()` for advanced host
 | ------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | defineApollo       | Preferred SPA / SSR configuration plugin. Creates the runtime when installed on a Vue app.                          | `defineApollo(options \| resolver, defaults?)`                     |
 | createApollo       | Advanced / legacy runtime factory for package integrations                                                          | `createApollo(options, runtimeOptions?)`                           |
-| setToken           | Sets the token and refresh token in the cookie. Cookie attrs are auto-detected.                                     | `setToken(token)` or `setToken({ key?, token, refreshToken, options? })` |
+| setToken           | Sets the token and refresh token using the configured cookie attributes.                         | `setToken(token)` or `setToken({ key?, token, refreshToken, options? })` |
 | getToken           | Gets the token from the cookie                                                                                      | `getToken(key?)`                                                   |
 | getRefreshToken    | Gets the refresh token from the cookie                                                                              | `getRefreshToken(key?)`                                            |
-| removeToken        | Removes the token and refresh token. Uses auto-detected options so cookies on parent domains are removed correctly. | `removeToken(key?, options?)`                                      |
-| getCookieOptions   | Returns the auto-detected cookie attributes for the current environment.                                            | `getCookieOptions(overrides?)`                                     |
+| removeToken        | Removes the token and refresh token using the configured cookie attributes.                       | `removeToken(key?, options?)`                                      |
+| getCookieOptions   | Returns environment defaults merged with configured token-cookie attributes.                      | `getCookieOptions(overrides?)`                                     |
 | loadApolloClients  | Initializes Apollo Clients for use outside components                                                               | `loadApolloClients()`                                              |
 | useKeepCookieAlive | Keeps the auth token cookie alive by updating it periodically                                                       | `useKeepCookieAlive(debounceMs?: number)` (defaults to 10000 ms)   |
 | createAuthRuntime  | Built-in auth runtime — shared reactive state, verify / logout, auto SPA navigate                                   | `createAuthRuntime({ useMeQuery, ... })`                           |
@@ -589,25 +589,16 @@ setToken({
 Configure the generated-composable `refresh` contract on `defineApollo`:
 
 ```typescript
-import {
-  defineApollo,
-  getRefreshToken,
-  setToken,
-  removeToken,
-} from 'vue-apollo-client'
+import { defineApollo } from 'vue-apollo-client'
 import { useRefreshTokensMutation } from '@/graphql'
 
 export default defineApollo({
-  endPoints: { default: '...' },
+  endpoint: '...',
   tokenKey: 'auth_token',
   refresh: {
     useMutation: useRefreshTokensMutation,
-    getRefreshToken: () => getRefreshToken('auth_token'),
     createVariables: (refreshToken) => ({ refreshToken }),
     selectTokens: (data) => data?.refreshTokens,
-    persistTokens: ({ token, refreshToken }) =>
-      setToken({ key: 'auth_token', token, refreshToken }),
-    clearTokens: () => removeToken('auth_token'),
   },
   onLogout: () => {
     // The library already cleared all Apollo stores before this runs.
@@ -618,18 +609,25 @@ export default defineApollo({
 })
 ```
 
+For a custom token store (`getToken` or `clearToken`), provide all three
+refresh storage callbacks explicitly so access and refresh tokens cannot be
+split between a custom store and cookies.
+
 ---
 
 ### Cookie Management & Security
 
-`vue-apollo-client` auto-detects the best cookie attributes for the current environment, so you rarely need to pass anything:
+`vue-apollo-client` uses host-only cookies by default. It derives safe
+`secure` and `sameSite` values from the current environment, and applies one
+configured `tokenCookie` object consistently to access, refresh, stash, restore,
+and teardown operations:
 
-| Field      | Auto-detected value                                                                            |
+| Field      | Default / configured value                                                                      |
 | ---------- | ---------------------------------------------------------------------------------------------- |
 | `path`     | `'/'`                                                                                          |
 | `secure`   | `true` on HTTPS, `false` on localhost                                                          |
 | `sameSite` | `'None'` on HTTPS, `'Lax'` on localhost / HTTP                                                 |
-| `domain`   | parent domain for subdomains (e.g. `app.example.com` → `.example.com`), none on localhost / IP |
+| `domain`   | `undefined` (host-only); set explicitly when sharing auth across subdomains |
 
 The library also coerces `SameSite=None` → `Secure=true` automatically (browsers reject the cookie otherwise).
 
@@ -642,9 +640,12 @@ setToken({ token: 'jwt', refreshToken: 'rt' })
 // Override individual fields when you need to (e.g. custom path)
 setToken({ token: 'jwt', options: { path: '/admin' } })
 
-// Inspect the auto-detected defaults
+// Inspect the defaults (including configured tokenCookie attributes)
 console.log(getCookieOptions())
-// → { path: '/', domain: '.example.com', secure: true, sameSite: 'None' }
+// → { path: '/', domain: undefined, secure: true, sameSite: 'None' }
+
+// Shared production auth is always explicit:
+// defineApollo({ tokenCookie: { domain: 'example.com' }, ... })
 
 // Keep the session alive on user activity
 useKeepCookieAlive()
