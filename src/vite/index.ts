@@ -1,5 +1,5 @@
-import type { Plugin, ViteDevServer } from 'vite'
-import { VueApolloViteOptions } from './types'
+import { loadEnv, type Plugin, type ViteDevServer } from 'vite'
+import type { VueApolloViteOptions } from './types'
 import { runCodegen } from './codegen'
 import { shouldRunLiveCodegen } from './VueApolloViteCodegenGate'
 import path from 'path'
@@ -22,6 +22,7 @@ const APOLLO_SSR_NO_EXTERNAL: Array<string | RegExp> = [
 
 export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
   let root = process.cwd()
+  let codegenOptions = options
   let liveCodegen = true
   let timer: any = null
 
@@ -32,7 +33,7 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     timer = setTimeout(() => {
       // Watch-mode failures are already logged by runCodegen; the next edit
       // must remain retryable without creating an unhandled rejection.
-      void runCodegen(options, root).catch(() => undefined)
+      void runCodegen(codegenOptions, root).catch(() => undefined)
     }, 200)
   }
 
@@ -61,6 +62,19 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     },
     configResolved(config) {
       root = config.root
+      if (options.schema === undefined) {
+        const loadedEnv = loadEnv(config.mode, config.root, 'VITE_')
+        const explicitEndpoint =
+          config.env?.VITE_GRAPHQL_ENDPOINT?.trim() || loadedEnv.VITE_GRAPHQL_ENDPOINT?.trim()
+        const apiUrl =
+          config.env?.VITE_API_URL?.trim() || loadedEnv.VITE_API_URL?.trim()
+        codegenOptions = {
+          ...options,
+          schema:
+            explicitEndpoint ||
+            (apiUrl ? `${apiUrl}/graphql` : 'http://localhost:4000/graphql'),
+        }
+      }
       // `vite build` (client + SSR) skips remote schema fetch / codegen.
       // `vite` / `vite dev` keep the existing live codegen behaviour.
       liveCodegen = shouldRunLiveCodegen(config.command)
@@ -82,7 +96,7 @@ export function vueApollo(options: VueApolloViteOptions = {}): Plugin {
     },
     async buildStart() {
       if (!liveCodegen) return
-      await runCodegen(options, root)
+      await runCodegen(codegenOptions, root)
     },
     // Handle file updates (HMR)
     handleHotUpdate({ file }) {
