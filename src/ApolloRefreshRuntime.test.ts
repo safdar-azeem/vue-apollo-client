@@ -93,6 +93,9 @@ describe('generated-document refresh runtime', () => {
 
   it('runs a generated refresh mutation composable inside the owning app context', async () => {
     let token = 'expired'
+    const clearTokens = vi.fn(() => {
+      token = ''
+    })
     let refreshCount = 0
     const runtime = createApollo({
       endPoints: { default: 'https://default.test/graphql' },
@@ -105,6 +108,7 @@ describe('generated-document refresh runtime', () => {
         persistTokens: (tokens) => {
           token = tokens.token
         },
+        clearTokens,
       },
     }, {
       server: false,
