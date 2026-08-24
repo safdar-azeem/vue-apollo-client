@@ -2,6 +2,10 @@ import { gql } from '@apollo/client/core/index.js'
 import type { DocumentNode } from 'graphql'
 import type { VueApolloClients } from './ApolloOperationRuntime'
 import { resolveApolloSessionCacheKey } from './ApolloSessionRuntime'
+import {
+  getRefreshToken as getCookieRefreshToken,
+  getToken as getCookieToken,
+} from './composables/useCookies'
 import type { VueApolloClientOptions } from './types'
 
 interface QueuedMutation {
@@ -55,10 +59,22 @@ export const createApolloOfflineRuntime = (
   const syncing = new Map<string, Promise<void>>()
   const applicationId = options.applicationId || 'application'
   const authBoundary = options.authBoundary || options.tokenKey || 'anonymous'
+  const sessionSource = () => {
+    if (options.getSessionId) return options.getSessionId()
+    const token = options.getToken
+      ? options.getToken()
+      : getCookieToken(options.tokenKey || 'token', options.tokenCookie)
+    const refreshToken = options.refresh?.getRefreshToken
+      ? options.refresh.getRefreshToken()
+      : options.getToken
+        ? undefined
+        : getCookieRefreshToken(options.tokenKey || 'token', options.tokenCookie)
+    return token || refreshToken
+  }
   const sessionId = () =>
-    resolveApolloSessionCacheKey(options.getSessionId?.() ?? null) || 'anonymous'
+    resolveApolloSessionCacheKey(sessionSource() ?? null) || 'anonymous'
   const queuePrefix = (clientId: string) => {
-    const endpoint = options.endPoints[clientId] || ''
+    const endpoint = options.endPoints?.[clientId] || options.endpoint || ''
     return [
       'vue-apollo-mutations:v1',
       stableHash(applicationId),
