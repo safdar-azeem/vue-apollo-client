@@ -44,16 +44,24 @@ const getParentDomainCandidates = (hostname: string): string[] => {
 	return Array.from(domains)
 }
 
+const normalizeCookieDomain = (domain?: string): string | undefined => {
+	const normalized = domain?.trim().toLowerCase().replace(/^\.+/, '')
+	return normalized || undefined
+}
+
 const getLegacyDomainRemovalOptions = (
 	options: CookieAttributes = {},
 ): CookieAttributes[] => {
 	if (typeof window === 'undefined') return []
 
 	const baseOptions = getCookieOptions(options)
-	return getParentDomainCandidates(window.location.hostname).map((domain) => ({
-		...baseOptions,
-		domain,
-	}))
+	const activeDomain = normalizeCookieDomain(baseOptions.domain)
+	return getParentDomainCandidates(window.location.hostname)
+		.filter((domain) => normalizeCookieDomain(domain) !== activeDomain)
+		.map((domain) => ({
+			...baseOptions,
+			domain,
+		}))
 }
 
 const removeLegacyDomainCookies = (tokenKey: string, options?: CookieAttributes) => {
@@ -74,13 +82,15 @@ const removeLegacyDomainCookies = (tokenKey: string, options?: CookieAttributes)
  * - `domain`:  undefined by default so cookies are host-only.
  *              Pass `overrides.domain` only when an app intentionally
  *              wants auth cookies shared across subdomains.
+ * - configured `tokenCookie` attributes are applied before per-call overrides.
  *
  * Pass `overrides` to override any field. SameSite=None requires
  * Secure=true, so it's coerced automatically.
  */
 export const getCookieOptions = (overrides: CookieAttributes = {}): CookieAttributes => {
+	const configuredOptions = getGlobalConfig().tokenCookie || {}
 	if (typeof window === 'undefined') {
-		return { path: '/', ...overrides }
+		return { path: '/', ...configuredOptions, ...overrides }
 	}
 
 	const hostname = window.location.hostname
@@ -93,6 +103,7 @@ export const getCookieOptions = (overrides: CookieAttributes = {}): CookieAttrib
 		path: '/',
 		secure,
 		sameSite,
+		...configuredOptions,
 		...overrides,
 	}
 }
@@ -131,7 +142,7 @@ export const setToken = (
 	const EXPIRATION_MINUTES =
 		options?.expires || config?.tokenExpiration || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // Default 30 days
 
-	// Auto-detect defaults from the current environment; user overrides win
+	// Resolve environment and configured defaults; per-call overrides win.
 	const finalOptions: CookieAttributes = {
 		...getCookieOptions(),
 		...options, // User options override defaults
@@ -139,7 +150,7 @@ export const setToken = (
 	}
 
 	// SameSite=None requires Secure=true in all modern browsers
-	if (finalOptions.sameSite === 'None' && !finalOptions.secure) {
+	if (String(finalOptions.sameSite).toLowerCase() === 'none' && !finalOptions.secure) {
 		finalOptions.secure = true
 	}
 
@@ -155,15 +166,15 @@ export const setToken = (
 	}
 }
 
-export const getToken = (key = '') => {
+export const getToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey)
+	removeLegacyDomainCookies(tokenKey, options)
 	return Cookies.get(tokenKey)
 }
 
-export const getRefreshToken = (key = '') => {
+export const getRefreshToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey)
+	removeLegacyDomainCookies(tokenKey, options)
 	return Cookies.get(`${tokenKey}_refresh`)
 }
 
