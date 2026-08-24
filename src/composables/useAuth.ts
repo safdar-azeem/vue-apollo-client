@@ -183,7 +183,7 @@ export function createAuthRuntime(
     : getToken(options.tokenKey)
   const clearToken = async () => {
     if (options.clearToken) await options.clearToken()
-    else removeToken(options.tokenKey)
+    else removeToken(options.tokenKey, resolveRuntime().options.tokenCookie)
   }
   const teardown = async (reason: 'session_expired' | 'logout') => {
     if (state.tearingDown) return
