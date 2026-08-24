@@ -13,13 +13,16 @@ import { onError } from '@apollo/client/link/error/index.js'
 import { setContext as setContextLink } from '@apollo/client/link/context/index.js'
 import {
   getToken as getCookieToken,
+  getRefreshToken as getCookieRefreshToken,
   stashToken,
   restoreStashedToken,
   removeToken,
+  setToken,
 } from '../composables/useCookies'
 import type {
   VueApolloRefreshContract,
   VueApolloRuntimeOptions,
+  TokenCookieOptions,
 } from '../types'
 import { resolveApolloSessionCacheKey } from '../ApolloSessionRuntime'
 
@@ -38,6 +41,7 @@ export type ApolloUploadConfig = Parameters<typeof createUploadLink>[0]
 interface ConfigProps {
   endPoints: Record<string, string>
   tokenKey: string
+  tokenCookie?: TokenCookieOptions
   setContext?: SetGraphqlContext
   memoryConfig?: Partial<InMemoryCacheConfig>
   useGETForQueries?: boolean
@@ -87,12 +91,13 @@ const createRuntimeFetch = (
 export const graphqlConfig = ({
   endPoints,
   tokenKey,
+  tokenCookie,
   setContext,
   memoryConfig,
   useGETForQueries,
   apolloClientConfig,
   apolloUploadConfig,
-  refresh,
+  refresh: refreshTokenContract,
   refreshToken,
   onLogout,
   getToken,
@@ -103,20 +108,64 @@ export const graphqlConfig = ({
 }: ConfigProps): Record<string, ApolloClient<NormalizedCacheObject>> => {
   const server = runtime.server ?? typeof window === 'undefined'
   const readToken = (): string | null | undefined =>
-    server ? null : getToken ? getToken() : getCookieToken(tokenKey)
+    server ? null : getToken ? getToken() : getCookieToken(tokenKey, tokenCookie)
   const removeConfiguredToken = () => {
     if (server) return
     if (clearToken) clearToken()
-    else removeToken(tokenKey)
+    else removeToken(tokenKey, tokenCookie)
   }
 
-  if (!server) restoreStashedToken(tokenKey)
+  const usesCustomTokenStore = Boolean(getToken || clearToken)
+  if (usesCustomTokenStore && refreshTokenContract) {
+    const missingCallbacks: string[] = []
+    if (!refreshTokenContract.getRefreshToken) missingCallbacks.push('getRefreshToken')
+    if (!refreshTokenContract.persistTokens) missingCallbacks.push('persistTokens')
+    if (!refreshTokenContract.clearTokens) missingCallbacks.push('clearTokens')
+    if (missingCallbacks.length) {
+      throw new Error(
+        `Custom token stores must provide refresh callbacks: ${missingCallbacks.join(', ')}.`,
+      )
+    }
+  }
+
+  if (!server && !usesCustomTokenStore) restoreStashedToken(tokenKey, tokenCookie)
+
+  const refresh = refreshTokenContract
+    ? {
+        ...refreshTokenContract,
+        getRefreshToken: refreshTokenContract.getRefreshToken ?? (() =>
+          getCookieRefreshToken(tokenKey, tokenCookie)),
+        persistTokens: refreshTokenContract.persistTokens ?? ((tokens) =>
+          setToken({
+            key: tokenKey,
+            token: tokens.token,
+            refreshToken: tokens.refreshToken || undefined,
+            options: tokenCookie,
+          })),
+        clearTokens: refreshTokenContract.clearTokens ?? (() =>
+          (clearToken ? clearToken() : removeToken(tokenKey, tokenCookie))),
+      }
+    : undefined
+
+  const clearAuthentication = () => {
+    if (refresh) return refresh.clearTokens()
+    removeConfiguredToken()
+  }
 
   const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {}
   const refreshPromises = new Map<string, Promise<string>>()
+  const readRefreshToken = () => refresh
+    ? refresh.getRefreshToken()
+    : getCookieRefreshToken(tokenKey, tokenCookie)
+  const readSessionSource = () => {
+    if (getSessionId) return getSessionId()
+    const token = readToken()
+    if (token || getToken) return token
+    return readRefreshToken()
+  }
   let lastSessionKey = server
     ? null
-    : resolveApolloSessionCacheKey(getSessionId?.() ?? null)
+    : resolveApolloSessionCacheKey(readSessionSource() ?? null)
   const clearAllStores = async () => {
     await Promise.all(Object.values(clients).map(async (client) => {
       try {
@@ -147,9 +196,9 @@ export const graphqlConfig = ({
   }
 
   const authLink = setContextLink(async (operation, previousContext) => {
-    if (!server && getSessionId) {
+    if (!server) {
       // Compare stable session keys — never raw rotating access/refresh tokens.
-      const nextSessionKey = resolveApolloSessionCacheKey(getSessionId() ?? null)
+      const nextSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
       if (nextSessionKey !== lastSessionKey) {
         const previousSessionKey = lastSessionKey
         lastSessionKey = nextSessionKey
@@ -244,9 +293,9 @@ export const graphqlConfig = ({
         statusCode === 401 || statusCode === 403
 
       if (networkError) {
-        if (networkAuthenticationFailure && !refresh?.getRefreshToken() && !refreshToken) {
-          if (readToken() || refresh?.getRefreshToken()) {
-            removeConfiguredToken()
+        if (networkAuthenticationFailure && !readRefreshToken() && !refreshToken) {
+          if (readToken() || readRefreshToken()) {
+            clearAuthentication()
             void clearAllStores()
             onLogout?.()
           }
@@ -261,10 +310,10 @@ export const graphqlConfig = ({
           statusCode === 0 ||
           statusCode >= 500
 
-        if (isUnreachable && readToken() && !getToken) {
+        if (isUnreachable && readToken() && !usesCustomTokenStore) {
           // Stashing is a cookie-specific legacy behavior. Custom token stores
           // keep ownership of their own offline policy.
-          stashToken(tokenKey)
+          stashToken(tokenKey, tokenCookie)
           onLogout?.()
         }
       }
@@ -273,8 +322,7 @@ export const graphqlConfig = ({
         (error) => error.extensions?.code === 'WORKSPACE_UNAVAILABLE'
       )
       if (workspaceUnavailable) {
-        removeConfiguredToken()
-        void refresh?.clearTokens?.()
+        void clearAuthentication()
         void clearAllStores()
         onLogout?.()
         return
@@ -287,11 +335,10 @@ export const graphqlConfig = ({
           error.message === 'Unauthorized'
       ) || networkAuthenticationFailure
       const canRefresh = refresh
-        ? Boolean(refresh.getRefreshToken())
+        ? Boolean(readRefreshToken())
         : Boolean(refreshToken && readToken())
       if (authenticationFailure && !canRefresh) {
-        removeConfiguredToken()
-        void refresh?.clearTokens?.()
+        void clearAuthentication()
         void clearAllStores()
         onLogout?.()
         return
@@ -304,8 +351,7 @@ export const graphqlConfig = ({
       return fromPromise(
         runRefresh(clientId)
           .catch((error) => {
-            removeConfiguredToken()
-            void refresh?.clearTokens?.()
+            void clearAuthentication()
             void clearAllStores()
             onLogout?.()
             throw error
