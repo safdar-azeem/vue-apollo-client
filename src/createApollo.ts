@@ -21,6 +21,7 @@ import {
 } from './ApolloOperationRuntime'
 import { createApolloOfflineRuntime, type ApolloOfflineRuntime } from './ApolloOfflineRuntime'
 import { connectApolloToSsrHost } from './ssrHydration'
+import { normalizeApolloOptions } from './normalize'
 
 export interface VueApolloRuntime {
   install: (app: App) => void
@@ -86,6 +87,7 @@ export const createApollo = (
   options: VueApolloClientOptions,
   runtime: VueApolloRuntimeOptions = {}
 ): VueApolloRuntime => {
+  const normalizedOptions = normalizeApolloOptions(options)
   const server = runtime.server ?? typeof window === 'undefined'
   const registerGlobal = runtime.registerGlobal ?? !server
   const hydrationKey = runtime.hydrationKey ?? 'apollo'
@@ -104,29 +106,30 @@ export const createApollo = (
   }
 
   const clients = graphqlConfig({
-    endPoints: options.endPoints,
-    tokenKey: options.tokenKey || 'token',
-    setContext: options.setContext,
-    memoryConfig: options.memoryConfig,
-    useGETForQueries: options.useGETForQueries,
-    apolloClientConfig: options.apolloClientConfig,
-    apolloUploadConfig: options.apolloUploadConfig,
-    refresh: options.refresh,
-    refreshToken: options.refreshToken,
-    onLogout: options.onLogout,
-    getToken: options.getToken,
-    clearToken: options.clearToken,
-    formatToken: options.formatToken,
-    getSessionId: options.getSessionId,
+    endPoints: normalizedOptions.endPoints,
+    tokenKey: normalizedOptions.tokenKey,
+    tokenCookie: normalizedOptions.tokenCookie,
+    setContext: normalizedOptions.setContext,
+    memoryConfig: normalizedOptions.memoryConfig,
+    useGETForQueries: normalizedOptions.useGETForQueries,
+    apolloClientConfig: normalizedOptions.apolloClientConfig,
+    apolloUploadConfig: normalizedOptions.apolloUploadConfig,
+    refresh: normalizedOptions.refresh,
+    refreshToken: normalizedOptions.refreshToken,
+    onLogout: normalizedOptions.onLogout,
+    getToken: normalizedOptions.getToken,
+    clearToken: normalizedOptions.clearToken,
+    formatToken: normalizedOptions.formatToken,
+    getSessionId: normalizedOptions.getSessionId,
     runtime: runtimeOptions,
   })
 
   if (registerGlobal) {
-    setGlobalConfig(options)
+    setGlobalConfig(normalizedOptions)
     setClients(clients)
   }
 
-  const offline = createApolloOfflineRuntime(options, clients)
+  const offline = createApolloOfflineRuntime(normalizedOptions, clients)
   const apolloRuntime: VueApolloRuntime = {
     install(app: App) {
       if (ownerApp && ownerApp !== app) {
@@ -148,7 +151,7 @@ export const createApollo = (
     },
     server,
     clients,
-    options,
+    options: normalizedOptions,
     get hydrated() {
       return hydratedState
     },
