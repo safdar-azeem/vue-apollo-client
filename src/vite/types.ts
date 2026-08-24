@@ -7,7 +7,8 @@ export interface VueApolloViteOptions {
 
   /**
    * Path to the schema file or URL
-   * @default 'http://localhost:4000/graphql'
+   * When omitted, resolves `VITE_GRAPHQL_ENDPOINT`, then
+   * `VITE_API_URL + '/graphql'`, then the localhost fallback.
    */
   schema?: string | string[]
 
