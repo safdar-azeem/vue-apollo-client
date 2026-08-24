@@ -56,11 +56,31 @@ export interface VueApolloRefreshContract<
   /** @deprecated Prefer `useMutation` so application code never imports documents. */
   document?: DocumentNode
   clientId?: string
-  getRefreshToken: () => string | null | undefined
+  /** Optional for the normal cookie-token store; defaults to `tokenKey`. */
+  getRefreshToken?: () => string | null | undefined
   createVariables: (refreshToken: string) => TVariables
   selectTokens: (data: TData) => VueApolloRefreshTokens | null | undefined
-  persistTokens: (tokens: VueApolloRefreshTokens) => void | Promise<void>
+  /** Optional for the normal cookie-token store; persists with `tokenKey`. */
+  persistTokens?: (tokens: VueApolloRefreshTokens) => void | Promise<void>
+  /** Optional for the normal cookie-token store; removes both token cookies. */
   clearTokens?: () => void | Promise<void>
+}
+
+export type TokenCookieSameSite =
+  | 'strict'
+  | 'Strict'
+  | 'lax'
+  | 'Lax'
+  | 'none'
+  | 'None'
+
+/** Cookie attributes shared by the access, refresh, and temporary token cookies. */
+export interface TokenCookieOptions {
+  domain?: string
+  path?: string
+  secure?: boolean
+  sameSite?: TokenCookieSameSite
+  [property: string]: any
 }
 
 export interface VueApolloClientOptions {
@@ -68,12 +88,17 @@ export interface VueApolloClientOptions {
   applicationId?: string
   /** Stable authentication boundary, for example `admin` or `storefront-customer`. */
   authBoundary?: string
-  endPoints: Record<string, string>
+  /** Normal single-endpoint configuration. */
+  endpoint?: string
+  /** Advanced named-client configuration. Do not combine with `endpoint`. */
+  endPoints?: Record<string, string>
   /** Optional transport override, primarily for edge runtimes and tests. */
   fetch?: typeof fetch
   /** Per-operation transport timeout applied automatically in every runtime. */
   requestTimeoutMs?: number
   tokenKey?: string
+  /** Explicit cookie attributes for the token, refresh, and stash cookies. */
+  tokenCookie?: TokenCookieOptions
   tokenExpiration?: number | Date
   memoryConfig?: Partial<InMemoryCacheConfig>
   useGETForQueries?: boolean
