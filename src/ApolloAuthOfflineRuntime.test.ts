@@ -98,6 +98,336 @@ describe('application-scoped auth and offline state', () => {
     expect(navigate).toHaveBeenCalledWith('/auth/login?reason=session_expired')
   })
 
+  it('returns false without querying when no token is present', async () => {
+    const executeQuery = vi.fn()
+    const auth = createAuthRuntime({
+      clearStore: vi.fn(async () => undefined),
+      executeQuery,
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => null,
+    })
+
+    await expect(auth.verifySession()).resolves.toBe(false)
+    expect(executeQuery).not.toHaveBeenCalled()
+  })
+
+  it('treats an HTTP 401 as an expired session and tears it down', async () => {
+    const clearToken = vi.fn()
+    const runtime = {
+      clearStore: vi.fn(async () => undefined),
+      executeQuery: vi.fn(async () => {
+        throw { networkError: { statusCode: 401 } }
+      }),
+    } as any
+    const auth = createAuthRuntime(runtime, {
+      meQuery: ME_QUERY,
+      getToken: () => 'expired-token',
+      clearToken,
+    })
+
+    await expect(auth.verifySession()).resolves.toBe(false)
+    expect(clearToken).toHaveBeenCalledTimes(1)
+    expect(runtime.clearStore).toHaveBeenCalledTimes(1)
+    expect(auth.user.value).toBeNull()
+  })
+
+  it('propagates ordinary verification failures without tearing down the session', async () => {
+    const clearStore = vi.fn(async () => undefined)
+    const failure = new Error('temporary network failure')
+    const auth = createAuthRuntime({
+      clearStore,
+      executeQuery: vi.fn(async () => { throw failure }),
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => 'active-token',
+      initialUser: { id: 'still-unknown' },
+    })
+
+    await expect(auth.verifySession()).rejects.toBe(failure)
+    expect(auth.user.value).toEqual({ id: 'still-unknown' })
+    expect(clearStore).not.toHaveBeenCalled()
+  })
+
+  it('propagates FORBIDDEN without treating authorization as session expiry', async () => {
+    const clearStore = vi.fn(async () => undefined)
+    const auth = createAuthRuntime({
+      clearStore,
+      executeQuery: vi.fn(async () => {
+        throw { graphQLErrors: [{ extensions: { code: 'FORBIDDEN' } }] }
+      }),
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => 'active-token',
+      initialUser: { id: 'authorized-user' },
+    })
+
+    await expect(auth.verifySession()).rejects.toMatchObject({
+      graphQLErrors: [{ extensions: { code: 'FORBIDDEN' } }],
+    })
+    expect(auth.user.value).toEqual({ id: 'authorized-user' })
+    expect(clearStore).not.toHaveBeenCalled()
+  })
+
+  it('keeps newer verification bookkeeping after a session replacement', async () => {
+    let resolveFirst: ((value: any) => void) | undefined
+    let resolveSecond: ((value: any) => void) | undefined
+    let queryNumber = 0
+    const executeQuery = vi.fn(() => new Promise((resolve) => {
+      if (queryNumber++ === 0) resolveFirst = resolve
+      else resolveSecond = resolve
+    }))
+    const auth = createAuthRuntime({
+      clearStore: vi.fn(async () => undefined),
+      executeQuery,
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => 'active-token',
+      setToken: vi.fn(async () => undefined),
+    })
+
+    const first = auth.verifySession()
+    expect(auth.loading.value).toBe(true)
+
+    await auth.setSession({
+      token: 'replacement-token',
+      user: { id: 'replacement-user' },
+    })
+    const second = auth.verifySession()
+    expect(executeQuery).toHaveBeenCalledTimes(2)
+    expect(auth.loading.value).toBe(true)
+
+    resolveFirst?.({ data: { me: { id: 'stale-user' } } })
+    await expect(first).resolves.toBe(true)
+    expect(auth.user.value).toEqual({ id: 'replacement-user' })
+
+    // The stale finalizer must not clear the active verification. A third
+    // caller therefore deduplicates against the still-pending second query.
+    const third = auth.verifySession()
+    expect(executeQuery).toHaveBeenCalledTimes(2)
+    expect(auth.loading.value).toBe(true)
+
+    resolveSecond?.({ data: { me: { id: 'verified-replacement' } } })
+    await expect(Promise.all([second, third])).resolves.toEqual([true, true])
+    expect(auth.user.value).toEqual({ id: 'verified-replacement' })
+    expect(auth.loading.value).toBe(false)
+  })
+
+  it('does not expire a replacement session when stale verification rejects', async () => {
+    let rejectFirst: ((reason?: any) => void) | undefined
+    let resolveSecond: ((value: any) => void) | undefined
+    let queryNumber = 0
+    const executeQuery = vi.fn(() => new Promise((resolve, reject) => {
+      if (queryNumber++ === 0) rejectFirst = reject
+      else resolveSecond = resolve
+    }))
+    const navigate = vi.fn(async () => undefined)
+    const auth = createAuthRuntime({
+      clearStore: vi.fn(async () => undefined),
+      executeQuery,
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => 'active-token',
+      setToken: vi.fn(async () => undefined),
+      navigate,
+    })
+
+    const first = auth.verify()
+    await auth.setSession({
+      token: 'replacement-token',
+      user: { id: 'replacement-user' },
+    })
+    const second = auth.verifySession()
+
+    rejectFirst?.(new Error('stale request failed'))
+    await expect(first).resolves.toBe(true)
+    expect(auth.user.value).toEqual({ id: 'replacement-user' })
+    expect(navigate).not.toHaveBeenCalled()
+
+    resolveSecond?.({ data: { me: { id: 'verified-replacement' } } })
+    await expect(second).resolves.toBe(true)
+  })
+
+  it('does not reuse invalidated verification while logout is pending', async () => {
+    let token: string | null = 'old-token'
+    let resolveOld: ((value: any) => void) | undefined
+    let releaseLogout: (() => void) | undefined
+    const executeQuery = vi.fn(() => new Promise((resolve) => {
+      resolveOld = resolve
+    }))
+    const auth = createAuthRuntime({
+      clearStore: vi.fn(async () => undefined),
+      executeQuery,
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => token,
+      clearToken: vi.fn(() => new Promise<void>((resolve) => {
+        releaseLogout = () => {
+          token = null
+          resolve()
+        }
+      })),
+    })
+
+    const first = auth.verifySession()
+    const logout = auth.clearSession()
+    const check = auth.verifySession()
+    expect(executeQuery).toHaveBeenCalledTimes(1)
+
+    releaseLogout?.()
+    await expect(logout).resolves.toBeUndefined()
+    await expect(check).resolves.toBe(false)
+    expect(executeQuery).toHaveBeenCalledTimes(1)
+
+    resolveOld?.({ data: { me: { id: 'stale-user' } } })
+    await expect(first).resolves.toBe(false)
+  })
+
+  it('waits for session cache reset and credential persistence before verifying', async () => {
+    let token = 'old-token'
+    let releaseCacheReset: (() => void) | undefined
+    let releaseCredentialPersist: (() => void) | undefined
+    const observedTokens: string[] = []
+    const clearStore = vi.fn(() => new Promise<void>((resolve) => {
+      releaseCacheReset = resolve
+    }))
+    const setToken = vi.fn(async (session: any) => {
+      token = session.token
+      await new Promise<void>((resolve) => {
+        releaseCredentialPersist = resolve
+      })
+    })
+    const executeQuery = vi.fn(async () => {
+      observedTokens.push(token)
+      return { data: { me: { id: 'verified-replacement' } } }
+    })
+    const auth = createAuthRuntime({
+      clearStore,
+      executeQuery,
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => token,
+      setToken,
+    })
+
+    const establishing = auth.setSession({
+      token: 'replacement-token',
+      user: { id: 'replacement-user' },
+    })
+    const verification = auth.verifySession()
+    expect(executeQuery).not.toHaveBeenCalled()
+
+    releaseCacheReset?.()
+    await Promise.resolve()
+    expect(setToken).toHaveBeenCalledTimes(1)
+    expect(executeQuery).not.toHaveBeenCalled()
+
+    releaseCredentialPersist?.()
+    await establishing
+    await expect(verification).resolves.toBe(true)
+    expect(observedTokens).toEqual(['replacement-token'])
+    expect(auth.user.value).toEqual({ id: 'verified-replacement' })
+  })
+
+  it('serializes clear → set → clear in invocation order', async () => {
+    let token: string | null = 'old-token'
+    let releaseFirstClear!: () => void
+    let releaseSet!: () => void
+    let clearCalls = 0
+    const firstClear = new Promise<void>((resolve) => {
+      releaseFirstClear = resolve
+    })
+    const setCompletion = new Promise<void>((resolve) => {
+      releaseSet = resolve
+    })
+    const clearToken = vi.fn(async () => {
+      clearCalls += 1
+      if (clearCalls === 1) await firstClear
+      token = null
+    })
+    const setToken = vi.fn(async (session: any) => {
+      token = session.token
+      await setCompletion
+    })
+    const auth = createAuthRuntime({
+      clearStore: vi.fn(async () => undefined),
+      executeQuery: vi.fn(async () => ({ data: { me: null } })),
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => token,
+      clearToken,
+      setToken,
+    })
+
+    const clearA = auth.clearSession()
+    await Promise.resolve()
+    const setB = auth.setSession({
+      token: 'new-token',
+      user: { id: 'replacement-user' },
+    })
+    const clearC = auth.clearSession()
+    let clearCResolved = false
+    void clearC.then(() => { clearCResolved = true })
+
+    releaseFirstClear()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(clearCResolved).toBe(false)
+    expect(token).toBe('new-token')
+
+    releaseSet()
+    await Promise.all([clearA, setB, clearC])
+    expect(clearToken).toHaveBeenCalledTimes(2)
+    expect(token).toBeNull()
+    expect(auth.user.value).toBeNull()
+    expect(auth.isAuthenticated.value).toBe(false)
+  })
+
+  it('keeps the newest session for set → clear → set ordering', async () => {
+    let token: string | null = null
+    let releaseFirstSet!: () => void
+    let clearStoreCalls = 0
+    const firstStoreReset = new Promise<void>((resolve) => {
+      releaseFirstSet = resolve
+    })
+    const clearStore = vi.fn(async () => {
+      clearStoreCalls += 1
+      if (clearStoreCalls === 1) await firstStoreReset
+    })
+    const setToken = vi.fn(async (session: any) => {
+      token = session.token
+    })
+    const clearToken = vi.fn(async () => {
+      token = null
+    })
+    const auth = createAuthRuntime({
+      clearStore,
+      executeQuery: vi.fn(async () => ({ data: { me: null } })),
+    } as any, {
+      meQuery: ME_QUERY,
+      getToken: () => token,
+      setToken,
+      clearToken,
+    })
+
+    const setA = auth.setSession({
+      token: 'first-token',
+      user: { id: 'first-user' },
+    })
+    const clearB = auth.clearSession()
+    const setC = auth.setSession({
+      token: 'last-token',
+      user: { id: 'last-user' },
+    })
+
+    expect(auth.user.value).toBeNull()
+    releaseFirstSet()
+    await Promise.all([setA, clearB, setC])
+    expect(token).toBe('last-token')
+    expect(auth.user.value).toEqual({ id: 'last-user' })
+    expect(auth.isAuthenticated.value).toBe(true)
+  })
+
   it('isolates offline queues and never replays into a different session', async () => {
     const jwtFor = (sub: string) => {
       const header = btoa(JSON.stringify({ alg: 'none' }))
