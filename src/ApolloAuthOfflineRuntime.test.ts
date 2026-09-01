@@ -47,6 +47,57 @@ describe('application-scoped auth and offline state', () => {
     expect(rightNavigate).not.toHaveBeenCalled()
   })
 
+  it('tears down an expired session without navigating in verifySession', async () => {
+    const navigate = vi.fn(async () => undefined)
+    const clearToken = vi.fn()
+    const runtime = {
+      clearStore: vi.fn(async () => undefined),
+      executeQuery: vi.fn(async () => {
+        throw {
+          graphQLErrors: [
+            { extensions: { code: 'UNAUTHENTICATED' }, message: 'Expired' },
+          ],
+        }
+      }),
+    } as any
+    const auth = createAuthRuntime(runtime, {
+      meQuery: ME_QUERY,
+      getToken: () => 'expired-token',
+      clearToken,
+      navigate,
+    })
+
+    await expect(auth.verifySession()).resolves.toBe(false)
+    expect(clearToken).toHaveBeenCalledTimes(1)
+    expect(runtime.clearStore).toHaveBeenCalledTimes(1)
+    expect(auth.user.value).toBeNull()
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('keeps verify() legacy session-expired navigation', async () => {
+    const navigate = vi.fn(async () => undefined)
+    const runtime = {
+      clearStore: vi.fn(async () => undefined),
+      executeQuery: vi.fn(async () => {
+        throw {
+          graphQLErrors: [
+            { extensions: { code: 'UNAUTHENTICATED' }, message: 'Expired' },
+          ],
+        }
+      }),
+    } as any
+    const auth = createAuthRuntime(runtime, {
+      meQuery: ME_QUERY,
+      getToken: () => 'expired-token',
+      clearToken: vi.fn(),
+      navigate,
+      loginRoute: '/auth/login',
+    })
+
+    await expect(auth.verify()).resolves.toBe(false)
+    expect(navigate).toHaveBeenCalledWith('/auth/login?reason=session_expired')
+  })
+
   it('isolates offline queues and never replays into a different session', async () => {
     const jwtFor = (sub: string) => {
       const header = btoa(JSON.stringify({ alg: 'none' }))
