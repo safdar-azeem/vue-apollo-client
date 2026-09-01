@@ -12,13 +12,16 @@ export interface UseAuthOptions {
   /** @deprecated Prefer `useMeQuery`; application code should not import documents. */
   meQuery?: any
   meSelector?: (data: any) => any
+  /** Destination used after explicit logout. */
   loginRoute?: string
+  /** Query-string reason used by the legacy `verify()` redirect. */
   sessionExpiredReason?: string
   clientId?: string
   authBoundary?: string
   tokenKey?: string
   getToken?: () => string | null | undefined
   clearToken?: () => void | Promise<void>
+  /** Navigation used by legacy redirects and explicit logout. */
   navigate?: (path: string) => void | Promise<void>
 }
 
@@ -37,14 +40,23 @@ export interface AuthState {
   isAuthenticated: ComputedRef<boolean>
   loading: Ref<boolean>
   error: Ref<any | null>
+  /** Legacy verification that redirects after an expired session. */
   verify: () => Promise<boolean>
-  logout: () => Promise<void>
+  /** Session verification primitive; never performs navigation. */
+  verifySession: () => Promise<boolean>
+  logout: (navigate?: (path: string) => void | Promise<void>) => Promise<void>
   reset: () => void
 }
 
+interface VerificationResult {
+  valid: boolean
+  expired: boolean
+}
+
 interface AuthInternalState extends AuthState {
-  inflight: Promise<boolean> | null
+  inflight: Promise<VerificationResult> | null
   tearingDown: boolean
+  expiredNavigation: Promise<void> | null
 }
 
 const runtimeStates = new WeakMap<
@@ -60,21 +72,31 @@ export const setAuthRouter = (router: any) => {
 }
 
 const isAuthError = (error: any): boolean => {
+  // FORBIDDEN/HTTP 403 belongs to operation authorization. It must not tear
+  // down an authenticated session merely because this verification attempt or
+  // another field was not permitted.
   const graphQLErrors: any[] = error?.graphQLErrors || []
-  if (graphQLErrors.some((entry: any) =>
-    entry?.extensions?.code === 'UNAUTHENTICATED' ||
-    entry?.extensions?.code === 'FORBIDDEN' ||
-    entry?.extensions?.code === 'WORKSPACE_UNAVAILABLE' ||
-    /unauthori[sz]ed/i.test(entry?.message ?? '') ||
-    /user not found/i.test(entry?.message ?? '')
-  )) return true
+  if (graphQLErrors.some((entry: any) => {
+    const code = entry?.extensions?.code
+    if (code === 'UNAUTHENTICATED' || code === 'WORKSPACE_UNAVAILABLE') {
+      return true
+    }
+    if (code) return false
+    return /unauthori[sz]ed/i.test(entry?.message ?? '') ||
+      /user not found/i.test(entry?.message ?? '')
+  })) return true
   const statusCode =
     error?.networkError?.statusCode ?? error?.networkError?.result?.status
-  return statusCode === 401 || statusCode === 403
+  return statusCode === 401
 }
 
-const navigate = async (path: string, options: UseAuthOptions) => {
+const navigate = async (
+  path: string,
+  options: UseAuthOptions,
+  override?: (path: string) => void | Promise<void>
+) => {
   if (typeof window === 'undefined') return
+  if (override) return void await override(path)
   if (options.navigate) return void await options.navigate(path)
   if (compatibilityRouter?.push) return void await compatibilityRouter.push(path)
   window.location.assign(path)
@@ -174,7 +196,9 @@ export function createAuthRuntime(
     error: ref(null),
     inflight: null,
     tearingDown: false,
+    expiredNavigation: null,
     verify: async () => false,
+    verifySession: async () => false,
     logout: async () => undefined,
     reset: () => undefined,
   }
@@ -185,7 +209,7 @@ export function createAuthRuntime(
     if (options.clearToken) await options.clearToken()
     else removeToken(options.tokenKey, resolveRuntime().options.tokenCookie)
   }
-  const teardown = async (reason: 'session_expired' | 'logout') => {
+  const teardown = async () => {
     if (state.tearingDown) return
     state.tearingDown = true
     await clearToken()
@@ -197,23 +221,13 @@ export function createAuthRuntime(
     state.user.value = null
     state.error.value = null
     state.inflight = null
-    const loginRoute = options.loginRoute || '/login'
-    if (reason === 'session_expired') {
-      const separator = loginRoute.includes('?') ? '&' : '?'
-      await navigate(
-        `${loginRoute}${separator}reason=${options.sessionExpiredReason || 'session_expired'}`,
-        options
-      )
-    } else {
-      await navigate(loginRoute, options)
-    }
   }
 
-  state.verify = () => {
+  const runVerification = (): Promise<VerificationResult> => {
     if (state.inflight) return state.inflight
     if (!readToken()) {
       state.user.value = null
-      return Promise.resolve(false)
+      return Promise.resolve({ valid: false, expired: false })
     }
     if (state.tearingDown) state.tearingDown = false
     state.loading.value = true
@@ -231,15 +245,18 @@ export function createAuthRuntime(
         ? options.meSelector(data)
         : (data as any)?.me
       if (!currentUser) {
-        await teardown('session_expired')
-        return false
+        await teardown()
+        return { valid: false, expired: true }
       }
       state.user.value = currentUser
-      return true
+      return { valid: true, expired: false }
     }).catch(async (error) => {
       state.error.value = error
-      if (isAuthError(error)) await teardown('session_expired')
-      return false
+      if (isAuthError(error)) {
+        await teardown()
+        return { valid: false, expired: true }
+      }
+      return { valid: false, expired: false }
     }).finally(() => {
       state.loading.value = false
       state.inflight = null
@@ -247,11 +264,33 @@ export function createAuthRuntime(
     state.inflight = promise
     return promise
   }
-  state.logout = () => teardown('logout')
+  state.verifySession = async () => (await runVerification()).valid
+  state.verify = async () => {
+    const result = await runVerification()
+    if (!result.valid && result.expired) {
+      const navigation = state.expiredNavigation ??= (async () => {
+        const loginRoute = options.loginRoute || '/login'
+        const separator = loginRoute.includes('?') ? '&' : '?'
+        await navigate(
+          `${loginRoute}${separator}reason=${options.sessionExpiredReason || 'session_expired'}`,
+          options
+        )
+      })().finally(() => {
+        state.expiredNavigation = null
+      })
+      await navigation
+    }
+    return result.valid
+  }
+  state.logout = async (navigateOverride) => {
+    await teardown()
+    await navigate(options.loginRoute || '/login', options, navigateOverride)
+  }
   state.reset = () => {
     state.user.value = null
     state.error.value = null
     state.inflight = null
+    state.expiredNavigation = null
     state.tearingDown = false
   }
   states.set(boundary, state)
