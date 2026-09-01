@@ -49,6 +49,30 @@ const normalizeCookieDomain = (domain?: string): string | undefined => {
 	return normalized || undefined
 }
 
+/**
+ * Read one cookie from an HTTP Cookie header without touching browser globals.
+ * This is intentionally separate from `getToken()`, whose js-cookie backing
+ * store is browser-only.
+ */
+export const getCookieValueFromHeader = (
+	header: string | undefined,
+	key: string,
+): string | undefined => {
+	if (!header || !key) return undefined
+	for (const segment of header.split(';')) {
+		const separator = segment.indexOf('=')
+		if (separator <= 0) continue
+		if (segment.slice(0, separator).trim() !== key) continue
+		const raw = segment.slice(separator + 1).trim()
+		try {
+			return decodeURIComponent(raw.replace(/^"|"$/g, ''))
+		} catch {
+			return raw
+		}
+	}
+	return undefined
+}
+
 const getLegacyDomainRemovalOptions = (
 	options: CookieAttributes = {},
 ): CookieAttributes[] => {
@@ -181,7 +205,7 @@ export const getRefreshToken = (key = '', options?: CookieAttributes) => {
 /**
  * Remove the auth tokens. Host-only cookies are removed first, then
  * legacy parent-domain variants are cleared so old shared cookies
- * cannot leak between the main portal and workspace subdomains.
+ * cannot leak between the main application and other subdomains.
  */
 export const removeToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
