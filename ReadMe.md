@@ -374,7 +374,7 @@ This also removes the related refresh-token cookie.
 import { useAuth } from 'vue-apollo-client'
 import { useMeQuery } from './graphql/generated'
 
-const { user, isAuthenticated, loading, error, verify, logout, reset } = useAuth({
+const { user, isAuthenticated, loading, error, verify, verifySession, logout, reset } = useAuth({
   useMeQuery,
   loginRoute: '/login',
   navigate: (path) => router.push(path),
@@ -387,11 +387,19 @@ const { user, isAuthenticated, loading, error, verify, logout, reset } = useAuth
 | `isAuthenticated` | Authentication state         |
 | `loading`         | Session verification state   |
 | `error`           | Verification error           |
-| `verify()`        | Verify the current session   |
+| `verifySession()` | Verify without navigation    |
+| `verify()`        | Verify with legacy redirect  |
 | `logout()`        | Clear token and Apollo cache |
 | `reset()`         | Reset local auth state       |
 
 By default, `useAuth` expects the authenticated user at `data.me`.
+
+`verifySession()` updates authentication state and tears down an invalid session
+without navigating, which is the primitive used by route middleware. `verify()`
+retains the legacy behavior of redirecting an expired session to `loginRoute`
+with the configured `sessionExpiredReason`. `logout()` still navigates to
+`loginRoute` after it clears the session; pass a callback to `logout()` when the
+calling application owns SPA router navigation.
 
 For another response shape:
 
