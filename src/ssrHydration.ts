@@ -1,6 +1,6 @@
 import { inject, type App } from 'vue'
 import type { VueApolloRuntime } from './createApollo'
-import type { VueApolloState } from './types'
+import type { VueApolloAuthHydrationState, VueApolloState } from './types'
 
 /**
  * Minimal shape of a generic SSR hydration host.
@@ -36,6 +36,21 @@ export const resolveSsrHydrationHost = (app: App): SsrHydrationHost | null =>
     () => inject<SsrHydrationHost | null>(SSR_HYDRATION_HOST, null)
   )
 
+const isCredentialField = (key: string): boolean =>
+  /^(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization)$/i.test(key)
+
+const safeAuthUser = (user: unknown): unknown => {
+  try {
+    return JSON.parse(JSON.stringify(user, (key, value) =>
+      key && isCredentialField(key) ? undefined : value
+    ))
+  } catch {
+    // A non-serializable user cannot be safely hydrated. The next browser
+    // verification will repopulate it from the active session.
+    return null
+  }
+}
+
 /**
  * Connects an Apollo runtime to a generic SSR hydration host, if present.
  *
@@ -60,23 +75,41 @@ export const connectApolloToSsrHost = (
 ): void => {
   const host = resolveSsrHydrationHost(app)
   if (!host) return
+  const authHydrationKey = `${hydrationKey}:auth`
   if (host.server) {
+    // Apollo cache hydration preserves the exact normalized cache. Auth
+    // credentials are not stored in this cache by the session runtime; only
+    // the dedicated auth projection below receives credential-field filtering.
     host.contribute(hydrationKey, () => runtime.extract())
+    if (runtime.auth) {
+      host.contribute(authHydrationKey, () => ({
+        // Auth hydration is deliberately user-only. Access and refresh
+        // credentials remain in cookies/custom stores and never enter HTML.
+        user: safeAuthUser(runtime.auth?.user.value ?? null),
+      } satisfies VueApolloAuthHydrationState))
+    }
     host.onDispose(() => runtime.stop())
     return
   }
   // Browser. The construction-time `initialState` restore is the single source
   // of truth. Only fall back to restoring here when it did not run.
-  if (runtime.hydrated) return
-  const restored = host.read<VueApolloState>(hydrationKey)
-  if (restored === undefined || restored === null) return
-  runtime.restore(restored)
-  runtime.markHydrated()
-  if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {
-    console.warn(
-      '[vue-apollo-client] Restored SSR cache through the legacy host path. ' +
-        'Prefer defineApollo (or pass initialState to createApollo) so the ' +
-        'cache-only first render and ssrForceFetchDelay apply together.'
+  if (!runtime.hydrated) {
+    const restored = host.read<VueApolloState>(hydrationKey)
+    if (restored !== undefined && restored !== null) {
+      runtime.restore(restored)
+      runtime.markHydrated()
+      if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {
+        console.warn(
+          '[vue-apollo-client] Restored SSR cache through the legacy host path. ' +
+            'Prefer defineApollo (or pass initialState to createApollo) so the ' +
+            'cache-only first render and ssrForceFetchDelay apply together.'
+        )
+      }
+    }
+  }
+  if (runtime.auth && runtime.auth.user.value == null) {
+    runtime.restoreAuthState?.(
+      host.read<VueApolloAuthHydrationState>(authHydrationKey)
     )
   }
 }
