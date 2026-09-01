@@ -7,6 +7,7 @@ import type {
 } from '@apollo/client/core/index.js'
 import type {
   VueApolloClientOptions,
+  VueApolloAuthHydrationState,
   VueApolloRuntimeOptions,
   VueApolloState,
 } from './types'
@@ -22,12 +23,21 @@ import {
 import { createApolloOfflineRuntime, type ApolloOfflineRuntime } from './ApolloOfflineRuntime'
 import { connectApolloToSsrHost } from './ssrHydration'
 import { normalizeApolloOptions } from './normalize'
+import {
+  createAuthRuntime,
+  restoreAuthState as restoreInstalledAuthState,
+  type AuthState,
+} from './composables/useAuth'
 
 export interface VueApolloRuntime {
   install: (app: App) => void
   server: boolean
   clients: VueApolloClients
   options: VueApolloClientOptions
+  /** Internal request-scoped credentials used by SSR auth verification. */
+  readonly requestHeaders?: Readonly<Record<string, string>>
+  /** Auth state owned by this installed runtime, when configured. */
+  auth?: AuthState
   /**
    * True when this runtime's cache was restored from serialized SSR state — the
    * single derived hydration flag. Query composables serve the first render
@@ -39,6 +49,10 @@ export interface VueApolloRuntime {
   offline: ApolloOfflineRuntime
   extract: () => VueApolloState
   restore: (state: VueApolloState | null | undefined) => void
+  /** Internal hydration hook for the installed auth runtime. */
+  restoreAuthState?: (
+    state: VueApolloAuthHydrationState | null | undefined
+  ) => void
   executeQuery: <TData, TVariables extends OperationVariables = OperationVariables>(
     execution: VueApolloQueryExecution<TData, TVariables>
   ) => Promise<ApolloQueryResult<TData>>
@@ -99,15 +113,23 @@ export const createApollo = (
   const runtimeOptions: VueApolloRuntimeOptions = {
     ...runtime,
     server,
+    // Keep request-scoped credentials on the transport as well as in the
+    // auth reader. `requestHeaders` is useful to callers that do not want to
+    // populate the legacy `headers` field directly.
+    headers: {
+      ...(runtime.requestHeaders ?? {}),
+      ...(runtime.headers ?? {}),
+    },
     fetch: runtime.fetch ?? options.fetch,
     requestTimeoutMs: runtime.requestTimeoutMs ?? options.requestTimeoutMs,
+    requestHeaders: runtime.requestHeaders ?? runtime.headers,
     runWithContext: <T>(callback: () => T): T =>
       ownerApp ? ownerApp.runWithContext(callback) : callback(),
   }
 
   const clients = graphqlConfig({
     endPoints: normalizedOptions.endPoints,
-    tokenKey: normalizedOptions.tokenKey,
+    tokenKey: normalizedOptions.auth?.tokenKey || normalizedOptions.tokenKey,
     tokenCookie: normalizedOptions.tokenCookie,
     setContext: normalizedOptions.setContext,
     memoryConfig: normalizedOptions.memoryConfig,
@@ -117,10 +139,13 @@ export const createApollo = (
     refresh: normalizedOptions.refresh,
     refreshToken: normalizedOptions.refreshToken,
     onLogout: normalizedOptions.onLogout,
-    getToken: normalizedOptions.getToken,
-    clearToken: normalizedOptions.clearToken,
+    getToken: normalizedOptions.getToken || normalizedOptions.auth?.getToken,
+    setToken: normalizedOptions.setToken || normalizedOptions.auth?.setToken,
+    clearToken: normalizedOptions.clearToken || normalizedOptions.auth?.clearToken,
     formatToken: normalizedOptions.formatToken,
     getSessionId: normalizedOptions.getSessionId,
+    sessionMode: normalizedOptions.sessionMode || normalizedOptions.auth?.sessionMode,
+    credentials: normalizedOptions.credentials,
     runtime: runtimeOptions,
   })
 
@@ -130,6 +155,7 @@ export const createApollo = (
   }
 
   const offline = createApolloOfflineRuntime(normalizedOptions, clients)
+  let installedAuth: AuthState | undefined
   const apolloRuntime: VueApolloRuntime = {
     install(app: App) {
       if (ownerApp && ownerApp !== app) {
@@ -152,6 +178,7 @@ export const createApollo = (
     server,
     clients,
     options: normalizedOptions,
+    requestHeaders: runtimeOptions.requestHeaders,
     get hydrated() {
       return hydratedState
     },
@@ -162,6 +189,9 @@ export const createApollo = (
     extract: () => extractApolloState(clients),
     restore: (state: VueApolloState | null | undefined) =>
       restoreApolloState(clients, state),
+    restoreAuthState: (state) => {
+      if (installedAuth) restoreInstalledAuthState(installedAuth, state)
+    },
     executeQuery: (execution) => executeApolloQuery(apolloRuntime, execution),
     executeMutation: (execution) => executeApolloMutation(apolloRuntime, execution),
     clearStore: async (clientId) => {
@@ -180,6 +210,26 @@ export const createApollo = (
       for (const client of Object.values(clients)) client.stop()
       if (activeBrowserRuntime === apolloRuntime) activeBrowserRuntime = null
     },
+  }
+  if (normalizedOptions.auth) {
+    const configuredAuth = normalizedOptions.auth
+    installedAuth = createAuthRuntime(apolloRuntime, {
+      ...configuredAuth,
+      tokenKey: configuredAuth.tokenKey || normalizedOptions.tokenKey,
+      authBoundary:
+        configuredAuth.authBoundary || normalizedOptions.authBoundary,
+      sessionMode:
+        configuredAuth.sessionMode || normalizedOptions.sessionMode,
+      getToken: configuredAuth.getToken || normalizedOptions.getToken,
+      setToken: configuredAuth.setToken || normalizedOptions.setToken,
+      clearToken: configuredAuth.clearToken || normalizedOptions.clearToken,
+      initialUser: runtime.initialAuthState?.user ?? null,
+      initialAuthHydrated: Boolean(runtime.initialAuthState?.user),
+      // Navigation policy belongs to the consumer. The compatibility APIs can
+      // still navigate when an explicit callback/router is supplied.
+      autoNavigate: false,
+    })
+    apolloRuntime.auth = installedAuth
   }
   return apolloRuntime
 }
