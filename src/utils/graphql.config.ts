@@ -289,8 +289,11 @@ export const graphqlConfig = ({
       const statusCode =
         (networkError as any)?.statusCode ??
         (networkError as any)?.result?.status
+      // HTTP 403 and GraphQL FORBIDDEN are authorization outcomes for the
+      // current operation. Only an authentication failure may refresh or end
+      // the shared session here.
       const networkAuthenticationFailure =
-        statusCode === 401 || statusCode === 403
+        statusCode === 401
 
       if (networkError) {
         if (networkAuthenticationFailure && !readRefreshToken() && !refreshToken) {
@@ -329,10 +332,11 @@ export const graphqlConfig = ({
       }
 
       const authenticationFailure = graphQLErrors?.some(
-        (error) =>
-          error.extensions?.code === 'UNAUTHENTICATED' ||
-          error.extensions?.code === 'FORBIDDEN' ||
-          error.message === 'Unauthorized'
+        (error) => {
+          const code = error.extensions?.code
+          return code === 'UNAUTHENTICATED' ||
+            (!code && error.message === 'Unauthorized')
+        }
       ) || networkAuthenticationFailure
       const canRefresh = refresh
         ? Boolean(readRefreshToken())
