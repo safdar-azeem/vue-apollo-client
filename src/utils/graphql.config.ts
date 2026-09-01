@@ -12,6 +12,7 @@ import {
 import { onError } from '@apollo/client/link/error/index.js'
 import { setContext as setContextLink } from '@apollo/client/link/context/index.js'
 import {
+  getCookieValueFromHeader,
   getToken as getCookieToken,
   getRefreshToken as getCookieRefreshToken,
   stashToken,
@@ -51,9 +52,12 @@ interface ConfigProps {
   refreshToken?: () => Promise<string | void | null>
   onLogout?: () => void
   getToken?: () => string | null | undefined
-  clearToken?: () => void
+  setToken?: (session: { token?: string | null; refreshToken?: string | null }) => void | Promise<void>
+  clearToken?: () => void | Promise<void>
   formatToken?: (token: string) => string
   getSessionId?: () => string | null | undefined
+  sessionMode?: 'token' | 'cookie'
+  credentials?: RequestCredentials
   runtime?: VueApolloRuntimeOptions
 }
 
@@ -101,21 +105,40 @@ export const graphqlConfig = ({
   refreshToken,
   onLogout,
   getToken,
+  setToken: setConfiguredToken,
   clearToken,
   formatToken = (token) => token,
   getSessionId,
+  sessionMode,
+  credentials,
   runtime = {},
 }: ConfigProps): Record<string, ApolloClient<NormalizedCacheObject>> => {
   const server = runtime.server ?? typeof window === 'undefined'
+  const readRequestHeader = (name: string): string | undefined => {
+    const entry = Object.entries(runtime.requestHeaders ?? runtime.headers ?? {})
+      .find(([key]) => key.toLowerCase() === name)
+    return entry?.[1]
+  }
+  const readRequestToken = (): string | undefined => {
+    const authorization = readRequestHeader('authorization')
+    if (authorization) {
+      return authorization.replace(/^Bearer\s+/i, '').trim() || undefined
+    }
+    return getCookieValueFromHeader(readRequestHeader('cookie'), tokenKey)
+  }
   const readToken = (): string | null | undefined =>
-    server ? null : getToken ? getToken() : getCookieToken(tokenKey, tokenCookie)
-  const removeConfiguredToken = () => {
+    server
+      ? readRequestToken()
+      : getToken
+        ? getToken()
+        : getCookieToken(tokenKey, tokenCookie)
+  const removeConfiguredToken = (): void | Promise<void> => {
     if (server) return
-    if (clearToken) clearToken()
-    else removeToken(tokenKey, tokenCookie)
+    if (clearToken) return clearToken()
+    removeToken(tokenKey, tokenCookie)
   }
 
-  const usesCustomTokenStore = Boolean(getToken || clearToken)
+  const usesCustomTokenStore = Boolean(getToken || setConfiguredToken || clearToken)
   if (usesCustomTokenStore && refreshTokenContract) {
     const missingCallbacks: string[] = []
     if (!refreshTokenContract.getRefreshToken) missingCallbacks.push('getRefreshToken')
@@ -135,28 +158,34 @@ export const graphqlConfig = ({
         ...refreshTokenContract,
         getRefreshToken: refreshTokenContract.getRefreshToken ?? (() =>
           getCookieRefreshToken(tokenKey, tokenCookie)),
-        persistTokens: refreshTokenContract.persistTokens ?? ((tokens) =>
-          setToken({
+        persistTokens: refreshTokenContract.persistTokens ?? ((tokens) => {
+          if (setConfiguredToken) {
+            return setConfiguredToken(tokens)
+          }
+          return setToken({
             key: tokenKey,
             token: tokens.token,
             refreshToken: tokens.refreshToken || undefined,
             options: tokenCookie,
-          })),
+          })
+        }),
         clearTokens: refreshTokenContract.clearTokens ?? (() =>
           (clearToken ? clearToken() : removeToken(tokenKey, tokenCookie))),
       }
     : undefined
 
-  const clearAuthentication = () => {
+  const clearAuthentication = (): void | Promise<void> => {
     if (refresh) return refresh.clearTokens()
-    removeConfiguredToken()
+    return removeConfiguredToken()
   }
 
   const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {}
   const refreshPromises = new Map<string, Promise<string>>()
   const readRefreshToken = () => refresh
     ? refresh.getRefreshToken()
-    : getCookieRefreshToken(tokenKey, tokenCookie)
+    : server
+      ? getCookieValueFromHeader(readRequestHeader('cookie'), `${tokenKey}_refresh`)
+      : getCookieRefreshToken(tokenKey, tokenCookie)
   const readSessionSource = () => {
     if (getSessionId) return getSessionId()
     const token = readToken()
@@ -321,16 +350,6 @@ export const graphqlConfig = ({
         }
       }
 
-      const workspaceUnavailable = graphQLErrors?.some(
-        (error) => error.extensions?.code === 'WORKSPACE_UNAVAILABLE'
-      )
-      if (workspaceUnavailable) {
-        void clearAuthentication()
-        void clearAllStores()
-        onLogout?.()
-        return
-      }
-
       const authenticationFailure = graphQLErrors?.some(
         (error) => {
           const code = error.extensions?.code
@@ -385,6 +404,9 @@ export const graphqlConfig = ({
       ...apolloUploadConfig,
       uri: endpoint,
       fetch: runtimeFetch,
+      credentials:
+        credentials ??
+        (sessionMode === 'cookie' ? 'include' : apolloUploadConfig?.credentials),
       useGETForQueries:
         useGETForQueries ?? apolloUploadConfig?.useGETForQueries,
       headers: uploadHeaders,
