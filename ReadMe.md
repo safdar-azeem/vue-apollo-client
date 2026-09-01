@@ -321,6 +321,10 @@ Important:
 
 # Authentication
 
+For a normal application, configure `auth` on `defineApollo()` and use
+`auth.setSession()`/`auth.clearSession()`. The standalone token helpers below
+remain available for legacy and lower-level integrations.
+
 ## 7. Set Token
 
 ```ts
@@ -368,18 +372,64 @@ removeToken('auth_token')
 
 This also removes the related refresh-token cookie.
 
-## 11. `useAuth`
+## 11. Installed authentication (`defineApollo` + `useAuth`)
+
+Configure authentication once on the Apollo plugin. The installed runtime is
+created per Vue application and per SSR request, so application code does not
+need a second auth store or runtime bridge:
+
+```ts
+import { defineApollo } from 'vue-apollo-client'
+import { useMeQuery } from './graphql/generated'
+
+export default defineApollo({
+  endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
+  tokenKey: 'auth_token',
+  formatToken: token => `Bearer ${token}`,
+  auth: {
+    useMeQuery,
+    meSelector: data => data?.me,
+    permissions: user => user?.permissions || [],
+  },
+})
+```
+
+Use the auth state belonging to the currently installed application:
 
 ```ts
 import { useAuth } from 'vue-apollo-client'
-import { useMeQuery } from './graphql/generated'
 
-const { user, isAuthenticated, loading, error, verify, verifySession, logout, reset } = useAuth({
-  useMeQuery,
-  loginRoute: '/login',
-  navigate: (path) => router.push(path),
-})
+const auth = useAuth()
+
+await auth.setSession({ token, refreshToken, user })
+await auth.verifySession()
+auth.can('reports:view')
+await auth.clearSession()
 ```
+
+For a server-managed or `HttpOnly` session cookie, set `sessionMode: 'cookie'`,
+`credentials: 'include'`, and provide the consumer-owned authoritative logout
+callback:
+
+```ts
+auth: {
+  useMeQuery,
+  sessionMode: 'cookie',
+  clearSession: async () => {
+    const response = await fetch('/session/logout', {
+      method: 'POST',
+      credentials: 'include',
+    })
+    if (!response.ok) throw new Error('The server session could not be ended.')
+  },
+}
+```
+
+Browser verification will use the cookie-backed request even though JavaScript
+cannot read that cookie; SSR verification uses the request's cookie/header
+state. Cookie-backed sessions fail fast without `auth.clearSession`, and a
+failure from that callback is propagated instead of being reported as a
+successful logout.
 
 | API               | Purpose                      |
 | ----------------- | ---------------------------- |
@@ -389,17 +439,24 @@ const { user, isAuthenticated, loading, error, verify, verifySession, logout, re
 | `error`           | Verification error           |
 | `verifySession()` | Verify without navigation    |
 | `verify()`        | Verify with legacy redirect  |
-| `logout()`        | Clear token and Apollo cache |
+| `setSession()`    | Establish credentials and user state |
+| `clearSession()`  | Clear credentials, auth state, and Apollo cache |
+| `logout()`        | Clear the session; legacy navigation remains opt-in |
+| `getTokenClaims()`| Safely decode generic JWT claims |
+| `can()`           | Compare one or any of several permission strings |
 | `reset()`         | Reset local auth state       |
 
 By default, `useAuth` expects the authenticated user at `data.me`.
 
 `verifySession()` updates authentication state and tears down an invalid session
-without navigating, which is the primitive used by route middleware. `verify()`
-retains the legacy behavior of redirecting an expired session to `loginRoute`
-with the configured `sessionExpiredReason`. `logout()` still navigates to
-`loginRoute` after it clears the session; pass a callback to `logout()` when the
-calling application owns SPA router navigation.
+without navigating, which is the primitive used by route middleware. The
+installed `useAuth()` runtime also leaves `verify()` and `logout()` navigation
+to the consumer. The lower-level compatibility `createAuthRuntime()` API can
+retain legacy `verify()` redirects and `logout()` navigation when configured
+with `loginRoute`, `navigate`, or the deprecated `setAuthRouter()` integration.
+An explicit unauthenticated result returns `false`; ordinary GraphQL or
+infrastructure failures reject the verification promise and do not clear the
+session, because an unknown result must not become a login redirect.
 
 For another response shape:
 
@@ -409,6 +466,10 @@ useAuth({
   meSelector: (data) => data?.currentUser,
 })
 ```
+
+`useAuth()` without options is the preferred API. `createAuthRuntime()` and
+`useAuth(options)` remain advanced/compatibility forms for applications that
+manage their own runtime configuration.
 
 ## 12. Refresh Token
 
@@ -475,7 +536,7 @@ export default defineApollo({
   endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
   setContext: ({ operationName, variables, token }) => ({
     headers: {
-      'x-workspace-id': workspaceId.value,
+      'x-tenant-id': tenantId.value,
       'x-operation-name': operationName,
     },
   }),
@@ -536,6 +597,13 @@ const { result } = useGetUsersQuery({}, { ssr: false })
 
 `defineApollo` handles the normal managed SSR and hydration lifecycle.
 
+When auth is configured, SSR reads credentials from the request-scoped
+`cookie`/`authorization` headers. The server contributes only the current user
+alongside Apollo cache state; access and refresh credentials are never put in
+hydration HTML. The browser restores that user before middleware and UI run,
+so the initial protected route does not flash logged out or repeat `/me` solely
+because the runtime was recreated for hydration.
+
 ## 20. Advanced SSR
 
 Use `createApollo` only when your integration owns the SSR lifecycle or needs to provide request state manually.
@@ -570,6 +638,9 @@ Most applications only need `endpoint`. Add other options only when required.
 | `endpoint`           | Default GraphQL endpoint       |
 | `endPoints`          | Multiple named endpoints       |
 | `tokenKey`           | Access-token key               |
+| `auth`               | Installed current-user/session configuration |
+| `sessionMode`        | Token session or server-managed cookie session |
+| `credentials`        | Fetch credential mode for cookie sessions |
 | `formatToken`        | Format authorization token     |
 | `refresh`            | Refresh-token handling         |
 | `allowOffline`       | Enable offline mutations       |
@@ -590,6 +661,8 @@ Most applications only need `endpoint`. Add other options only when required.
 | `fetch`              | Custom `fetch` implementation                   |
 | `requestTimeoutMs`   | Operation timeout                               |
 | `tokenKey`           | Access-token key                                |
+| `sessionMode`        | Token or server-managed cookie session         |
+| `credentials`         | Fetch credential mode                          |
 | `tokenCookie`        | Token-cookie attributes                         |
 | `tokenExpiration`    | Token-cookie expiration                         |
 | `memoryConfig`       | Apollo normalized cache settings                |
@@ -601,7 +674,9 @@ Most applications only need `endpoint`. Add other options only when required.
 | `refresh`            | Generated refresh-token contract                |
 | `onLogout`           | Logout/auth failure callback                    |
 | `getToken`           | Read from a custom token store                  |
+| `setToken`           | Persist a custom token store                   |
 | `clearToken`         | Clear a custom token store                      |
+| `auth`               | Installed auth configuration (`useMeQuery`, selector, permissions) |
 | `formatToken`        | Format the authorization value                  |
 | `setContext`         | Per-operation Apollo context                    |
 
@@ -634,7 +709,7 @@ export default defineApollo({
   memoryConfig: {
     typePolicies: {
       User: {
-        keyFields: ['id', 'workspaceId'],
+        keyFields: ['id', 'tenantId'],
       },
     },
   },
@@ -663,6 +738,7 @@ The package still owns its configured link and cache.
 export default defineApollo({
   endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
   getToken: () => authSdk.getAccessToken(),
+  setToken: ({ token, refreshToken }) => authSdk.setSession(token, refreshToken),
   clearToken: () => authSdk.signOut(),
   getSessionId: () => authSdk.getStableSessionId(),
 })
@@ -694,6 +770,11 @@ Use a stable login identity for `getSessionId`, not a rotating access token.
 | ------------------- | -------------------------------- |
 | `useAuth`           | Authenticated user/session state |
 | `createAuthRuntime` | Lower-level auth runtime         |
+| `setSession`        | Establish access/refresh credentials and user state |
+| `clearSession`      | Clear credentials, auth state, and Apollo cache |
+| `verifySession`     | Non-navigating active-session verification |
+| `getTokenClaims`    | Safe generic JWT claim decoding |
+| `can`               | Generic any-match permission comparison |
 | `setToken`          | Save access/refresh tokens       |
 | `getToken`          | Read access token                |
 | `getRefreshToken`   | Read refresh token               |
