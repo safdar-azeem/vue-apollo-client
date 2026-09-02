@@ -24,6 +24,7 @@ const { mutate: deleteTask } = useDeleteTaskMutation()
 const editing = ref(false)
 const title = ref(props.task.title)
 const busy = ref(false)
+const errorMessage = ref('')
 
 watch(() => props.task.title, value => {
   if (!editing.value) title.value = value
@@ -37,8 +38,11 @@ const mutationOptions = {
 const toggleDone = async () => {
   if (!auth.can('tasks:write')) return
   busy.value = true
+  errorMessage.value = ''
   try {
     await updateTask({ id: props.task.id, done: !props.task.done }, mutationOptions)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Could not update task.'
   } finally {
     busy.value = false
   }
@@ -48,9 +52,12 @@ const saveTitle = async () => {
   const nextTitle = title.value.trim()
   if (!nextTitle || !auth.can('tasks:write')) return
   busy.value = true
+  errorMessage.value = ''
   try {
     await updateTask({ id: props.task.id, title: nextTitle }, mutationOptions)
     editing.value = false
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Could not update task.'
   } finally {
     busy.value = false
   }
@@ -60,9 +67,12 @@ const remove = async () => {
   if (!auth.can('tasks:delete')) return
   if (!window.confirm(`Delete “${props.task.title}”?`)) return
   busy.value = true
+  errorMessage.value = ''
   try {
     await deleteTask({ id: props.task.id }, mutationOptions)
     emit('deleted')
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Could not delete task.'
   } finally {
     busy.value = false
   }
@@ -95,5 +105,7 @@ const remove = async () => {
         <button class="small danger-outline" :disabled="busy" type="button" @click="remove">Delete</button>
       </template>
     </div>
+
+    <p v-if="errorMessage" class="notice error task-error">{{ errorMessage }}</p>
   </article>
 </template>
