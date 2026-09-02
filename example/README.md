@@ -46,7 +46,7 @@ http://localhost:4000/graphql
 
 `yarn dev` starts both the tiny GraphQL API and Vite application.
 
-The `vueApollo()` Vite plugin watches the `.graphql` operation files and regenerates `src/graphql/generated.ts` during development. The repository includes a generated-compatible copy so the example is readable/buildable immediately; after running Vite, the package's real codegen owns that file.
+The `vueApollo()` Vite plugin watches the `.graphql` operation files and regenerates `src/graphql/generated.ts` during development. The generated file is committed so a clean checkout can build immediately; it is codegen-owned and should never be edited manually.
 
 ## Repository tree
 
@@ -217,7 +217,19 @@ refresh: {
 }
 ```
 
-The demo API rotates tokens when the refresh mutation is called.
+The demo API rotates refresh tokens when `refreshSession` is called. The example
+wires the refresh contract so the runtime can perform that flow, but it does not
+force access-token expiry during normal interaction. In a real application, the
+API should expire or revoke access tokens and return `UNAUTHENTICATED`; the
+runtime can then refresh the session and retry the original operation.
+
+## 9. Client permissions versus server authorization
+
+`auth.can('tasks:write')` and `auth.can('tasks:delete')` control whether the
+example shows or enables client-side controls. They are UX checks, not security.
+The API independently authenticates every task operation and checks the
+corresponding permission with `requirePermission()`. A production API must
+enforce authorization on the server even when a client hides its controls.
 
 ## What this example intentionally does not include
 
@@ -235,6 +247,10 @@ Those concerns are independent of learning `vue-apollo-client`.
 
 ## Using this inside the vue-apollo-client repository
 
-If you place this under `examples/basic/` in the main repository, keep the public GitHub example depending on the published package (`vue-apollo-client@^1.4.0`) so users see the same installation they would use in a real project.
+This example lives at `example/` in the main repository and depends on the
+published package (`vue-apollo-client@^1.5.0`) so users see the same installation
+they would use in a real project.
 
-For local library development only, you can temporarily point that dependency at the local package, but do not publish a public example with an accidental machine-specific path.
+For local library development only, you can temporarily point that dependency at
+the local package, but do not publish a public example with an accidental
+machine-specific path.
