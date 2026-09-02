@@ -11,7 +11,7 @@ export default defineConfig({
     vue(),
     vueApollo({
       schema: './src/graphql/schema.graphql',
-      documents: ['src/graphql/operations/**/*.graphql'],
+      documents: ['src/graphql/**/*.graphql'],
       output: 'src/graphql/generated.ts',
     }),
   ],
