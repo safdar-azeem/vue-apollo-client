@@ -1,0 +1,112 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #151515;
+  background: #f6f6f4;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
+
+.topbar {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 28px;
+  background: #111;
+  color: white;
+}
+.topbar > div { display: flex; align-items: baseline; gap: 10px; }
+.topbar .muted { color: #aaa; }
+.user-pill { border: 1px solid #444; padding: 7px 11px; border-radius: 999px; font-size: 13px; }
+
+.container { width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0 80px; }
+.hero { max-width: 720px; margin-bottom: 28px; }
+.hero h1 { margin: 8px 0 10px; font-size: clamp(36px, 6vw, 64px); line-height: .98; letter-spacing: -0.045em; }
+.hero p:last-child { color: #626262; font-size: 17px; line-height: 1.6; }
+.eyebrow { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .13em; color: #777; }
+.muted, .hint { color: #707070; }
+.hint { font-size: 13px; }
+
+.card {
+  background: white;
+  border: 1px solid #deded8;
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .025);
+}
+.card h2 { margin: 0 0 10px; letter-spacing: -0.02em; }
+.narrow-card { max-width: 520px; }
+.grid { display: grid; gap: 16px; margin-bottom: 16px; }
+.two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.form-stack { display: grid; gap: 12px; margin-top: 18px; }
+label { display: grid; gap: 6px; font-size: 13px; font-weight: 650; }
+input {
+  width: 100%;
+  border: 1px solid #d0d0ca;
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: white;
+  outline: none;
+}
+input:focus { border-color: #777; box-shadow: 0 0 0 3px rgba(0,0,0,.06); }
+button {
+  border: 1px solid #111;
+  border-radius: 9px;
+  padding: 9px 13px;
+  background: #111;
+  color: white;
+}
+.secondary { background: white; color: #222; border-color: #cacac4; }
+.danger-outline { background: white; color: #9b2525; border-color: #ddb8b8; }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.small { padding: 6px 9px; font-size: 12px; }
+
+.data-list { display: grid; gap: 8px; margin: 16px 0 0; }
+.data-list div { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid #eee; padding-bottom: 7px; }
+.data-list dt { color: #777; }
+.data-list dd { margin: 0; font-weight: 650; text-align: right; }
+
+.notice { padding: 10px 12px; border-radius: 9px; font-size: 13px; }
+.error { background: #fff1f1; color: #8a2424; border: 1px solid #efcaca; }
+
+.task-section { margin-top: 16px; }
+.section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.section-heading h2 { margin-bottom: 0; }
+.task-list { display: grid; gap: 8px; }
+.task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e2e2dd;
+  border-radius: 11px;
+  padding: 10px;
+}
+.task.selected { border-color: #777; }
+.check { width: 34px; height: 34px; padding: 0; border-radius: 50%; background: white; color: #111; border-color: #ccc; }
+.task-main { min-width: 0; cursor: pointer; }
+.task-main strong, .task-main small { display: block; }
+.task-main small { margin-top: 3px; color: #999; }
+.task-main .done { color: #8a8a8a; text-decoration: line-through; }
+.task-actions { display: flex; gap: 6px; }
+.inline-input { padding: 7px 8px; }
+.details { border-top: 1px solid #e3e3de; margin-top: 20px; padding-top: 20px; }
+.details h3 { margin: 0 0 10px; }
+pre { margin: 0; padding: 12px; border-radius: 9px; background: #f4f4f1; overflow: auto; font-size: 12px; }
+
+@media (max-width: 760px) {
+  .two-column { grid-template-columns: 1fr; }
+  .topbar { padding: 0 16px; }
+  .topbar .muted { display: none; }
+  .container { padding-top: 36px; }
+  .task { grid-template-columns: auto 1fr; }
+  .task-actions { grid-column: 1 / -1; padding-left: 44px; }
+}
