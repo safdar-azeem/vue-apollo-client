@@ -6,7 +6,7 @@
   "description": "Small runnable Vue 3 example for vue-apollo-client: codegen, queries, mutations, CRUD and authentication.",
   "scripts": {
     "dev": "concurrently -k -n API,WEB \"yarn dev:api\" \"yarn dev:web\"",
-    "dev:web": "vite",
+    "dev:web": "sleep 3 && vite",
     "dev:api": "tsx watch server/index.ts",
     "build": "vite build",
     "preview": "vite preview",
