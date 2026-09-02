@@ -1,0 +1,30 @@
+{
+  "name": "vue-apollo-client-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Small runnable Vue 3 example for vue-apollo-client: codegen, queries, mutations, CRUD and authentication.",
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB \"yarn dev:api\" \"yarn dev:web\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "vite build",
+    "preview": "vite preview",
+    "api": "tsx server/index.ts"
+  },
+  "dependencies": {
+    "graphql": "^16.11.0",
+    "graphql-tag": "^2.12.6",
+    "graphql-yoga": "^5.16.0",
+    "vue": "^3.5.0",
+    "vue-apollo-client": "^1.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.6",
+    "vue-tsc": "^3.0.6"
+  }
+}
