@@ -7,8 +7,29 @@ import { createAuthRuntime } from './composables/useAuth'
 const ME_QUERY = gql`query RuntimeMe { me { id } }`
 const SAVE_MUTATION = gql`mutation RuntimeSave($value: String!) { save(value: $value) }`
 
+const createTestStorage = (): Storage => {
+  const values = new Map<string, string>()
+  return {
+    get length() {
+      return values.size
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, String(value)),
+  }
+}
+
 describe('application-scoped auth and offline state', () => {
   beforeEach(() => {
+    // Keep browser queue tests independent from Node's optional global
+    // localStorage implementation and jsdom origin configuration.
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: createTestStorage(),
+      writable: true,
+    })
     localStorage.clear()
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
   })
@@ -331,9 +352,18 @@ describe('application-scoped auth and offline state', () => {
 
   it('serializes clear → set → clear in invocation order', async () => {
     let token: string | null = 'old-token'
+    let firstClearCompleted = false
+    let resolveFirstClearStarted!: () => void
+    let resolveSetStarted!: () => void
     let releaseFirstClear!: () => void
     let releaseSet!: () => void
     let clearCalls = 0
+    const firstClearStarted = new Promise<void>((resolve) => {
+      resolveFirstClearStarted = resolve
+    })
+    const setStarted = new Promise<void>((resolve) => {
+      resolveSetStarted = resolve
+    })
     const firstClear = new Promise<void>((resolve) => {
       releaseFirstClear = resolve
     })
@@ -342,11 +372,17 @@ describe('application-scoped auth and offline state', () => {
     })
     const clearToken = vi.fn(async () => {
       clearCalls += 1
-      if (clearCalls === 1) await firstClear
+      if (clearCalls === 1) {
+        resolveFirstClearStarted()
+        await firstClear
+        firstClearCompleted = true
+      }
       token = null
     })
     const setToken = vi.fn(async (session: any) => {
+      expect(firstClearCompleted).toBe(true)
       token = session.token
+      resolveSetStarted()
       await setCompletion
     })
     const auth = createAuthRuntime({
@@ -360,7 +396,7 @@ describe('application-scoped auth and offline state', () => {
     })
 
     const clearA = auth.clearSession()
-    await Promise.resolve()
+    await firstClearStarted
     const setB = auth.setSession({
       token: 'new-token',
       user: { id: 'replacement-user' },
@@ -370,8 +406,8 @@ describe('application-scoped auth and offline state', () => {
     void clearC.then(() => { clearCResolved = true })
 
     releaseFirstClear()
-    await Promise.resolve()
-    await Promise.resolve()
+    await setStarted
+    expect(firstClearCompleted).toBe(true)
     expect(clearCResolved).toBe(false)
     expect(token).toBe('new-token')
 
