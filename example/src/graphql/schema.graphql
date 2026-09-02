@@ -1,0 +1,38 @@
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  permissions: [String!]!
+}
+
+type Task {
+  id: ID!
+  title: String!
+  done: Boolean!
+  ownerId: ID!
+}
+
+type Session {
+  token: String!
+  refreshToken: String!
+  user: User!
+}
+
+type RefreshResult {
+  token: String!
+  refreshToken: String!
+}
+
+type Query {
+  me: User
+  tasks: [Task!]!
+  task(id: ID!): Task
+}
+
+type Mutation {
+  login(email: String!, password: String!): Session!
+  refreshSession(refreshToken: String!): RefreshResult!
+  createTask(title: String!): Task!
+  updateTask(id: ID!, title: String, done: Boolean): Task!
+  deleteTask(id: ID!): Boolean!
+}
