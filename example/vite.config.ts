@@ -3,6 +3,10 @@ import vue from '@vitejs/plugin-vue'
 import { vueApollo } from 'vue-apollo-client/vite'
 
 export default defineConfig({
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
   plugins: [
     vue(),
     vueApollo({
