@@ -159,9 +159,9 @@ const executeGeneratedAuthQuery = async (
       errorPolicy: 'none',
     })
   )!
-  const query = runtime.runWithContext
+  const query = (runtime.runWithContext
     ? runtime.runWithContext(createQueryInstance)
-    : createQueryInstance()
+    : createQueryInstance()) as GeneratedAuthQuery
   try {
     return await new Promise<{ data?: any }>((resolve, reject) => {
       let settled = false
@@ -473,11 +473,13 @@ export function createAuthRuntime(
     const runtime = resolveRuntime()
     const version = state.sessionVersion
     const verificationId = ++state.nextVerificationId
-    const execution = options.useMeQuery
-      ? executeGeneratedAuthQuery(runtime, options.useMeQuery, clientId)
+    const useMeQuery = options.useMeQuery
+    const meQuery = options.meQuery
+    const execution = useMeQuery
+      ? executeGeneratedAuthQuery(runtime, useMeQuery, clientId)
       : runtime.executeQuery<any>({
           clientId,
-          document: options.meQuery,
+          document: meQuery!,
           fetchPolicy: 'network-only',
           errorPolicy: 'none',
         })
