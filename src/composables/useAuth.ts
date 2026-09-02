@@ -313,8 +313,7 @@ export function createAuthRuntime(
     tearingDown: false,
     expiredNavigation: null,
     sessionVersion: 0,
-    hydratedVerificationPending:
-      options.initialAuthHydrated ?? options.initialUser != null,
+    hydratedVerificationPending: Boolean(options.initialAuthHydrated),
     verify: async () => false,
     verifySession: async () => false,
     setSession: async () => undefined,
