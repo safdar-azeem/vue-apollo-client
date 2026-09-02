@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { GraphQLError } from 'graphql'
 import { createSchema, createYoga } from 'graphql-yoga'
 
@@ -59,46 +60,17 @@ const requireUser = (request: Request) => {
   return demoUser
 }
 
-const typeDefs = /* GraphQL */ `
-  type User {
-    id: ID!
-    name: String!
-    email: String!
-    permissions: [String!]!
+const requirePermission = (request: Request, permission: string) => {
+  const user = requireUser(request)
+  if (!user.permissions.includes(permission)) {
+    throw new GraphQLError(`Missing permission: ${permission}.`, {
+      extensions: { code: 'FORBIDDEN' },
+    })
   }
+  return user
+}
 
-  type Task {
-    id: ID!
-    title: String!
-    done: Boolean!
-    ownerId: ID!
-  }
-
-  type Session {
-    token: String!
-    refreshToken: String!
-    user: User!
-  }
-
-  type RefreshResult {
-    token: String!
-    refreshToken: String!
-  }
-
-  type Query {
-    me: User
-    tasks: [Task!]!
-    task(id: ID!): Task
-  }
-
-  type Mutation {
-    login(email: String!, password: String!): Session!
-    refreshSession(refreshToken: String!): RefreshResult!
-    createTask(title: String!): Task!
-    updateTask(id: ID!, title: String, done: Boolean): Task!
-    deleteTask(id: ID!): Boolean!
-  }
-`
+const typeDefs = await readFile(new URL('../src/graphql/schema.graphql', import.meta.url), 'utf8')
 
 type Context = { request: Request }
 
@@ -135,7 +107,7 @@ const resolvers = {
       return { token: next.token, refreshToken: next.refreshToken }
     },
     createTask: (_parent: unknown, args: { title: string }, context: Context) => {
-      const user = requireUser(context.request)
+      const user = requirePermission(context.request, 'tasks:write')
       const task: Task = {
         id: `task-${randomUUID()}`,
         title: args.title.trim(),
@@ -150,7 +122,7 @@ const resolvers = {
       args: { id: string; title?: string | null; done?: boolean | null },
       context: Context,
     ) => {
-      const user = requireUser(context.request)
+      const user = requirePermission(context.request, 'tasks:write')
       const task = tasks.find(item => item.id === args.id && item.ownerId === user.id)
       if (!task) throw new GraphQLError('Task not found.', { extensions: { code: 'NOT_FOUND' } })
       if (typeof args.title === 'string') task.title = args.title.trim()
@@ -158,7 +130,7 @@ const resolvers = {
       return task
     },
     deleteTask: (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireUser(context.request)
+      const user = requirePermission(context.request, 'tasks:delete')
       const before = tasks.length
       tasks = tasks.filter(task => !(task.id === args.id && task.ownerId === user.id))
       return tasks.length !== before
