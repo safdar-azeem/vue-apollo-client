@@ -27,9 +27,10 @@ npm install vue-apollo-client
 yarn add vue-apollo-client
 ```
 
-`vue-apollo-client/vite` is included in the package. No separate Vite plugin package is required.
+## Example application
 
-> Vue 3.3+ is supported. The Vite integration assumes an existing Vite-based Vue project.
+For a complete small working application with authentication, queries, create,
+update, and delete mutations, see [`example/`](example/).
 
 ## Minimal Configuration
 
