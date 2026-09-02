@@ -1,0 +1,17 @@
+query GetTasks {
+  tasks {
+    id
+    title
+    done
+    ownerId
+  }
+}
+
+query GetTask($id: ID!) {
+  task(id: $id) {
+    id
+    title
+    done
+    ownerId
+  }
+}
