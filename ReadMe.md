@@ -126,15 +126,13 @@ mutation CreateUser($name: String!) {
 }
 ```
 
-Every operation must have a unique name.
-
 ### 6. Generate composables
 
 ```bash
 npm run dev
 ```
 
-The plugin generates typed composables in `src/graphql/generated.ts`. Commit this file because production client and SSR builds do not run live code generation.
+The plugin generates typed composables in `src/graphql/generated.ts`.
 
 # Usage
 
@@ -385,11 +383,11 @@ import { useMeQuery } from './graphql/generated'
 export default defineApollo({
   endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
   tokenKey: 'auth_token',
-  formatToken: token => `Bearer ${token}`,
+  formatToken: (token) => `Bearer ${token}`,
   auth: {
     useMeQuery,
-    meSelector: data => data?.me,
-    permissions: user => user?.permissions || [],
+    meSelector: (data) => data?.me,
+    permissions: (user) => user?.permissions || [],
   },
 })
 ```
@@ -431,20 +429,20 @@ state. Cookie-backed sessions fail fast without `auth.clearSession`, and a
 failure from that callback is propagated instead of being reported as a
 successful logout.
 
-| API               | Purpose                      |
-| ----------------- | ---------------------------- |
-| `user`            | Current authenticated user   |
-| `isAuthenticated` | Authentication state         |
-| `loading`         | Session verification state   |
-| `error`           | Verification error           |
-| `verifySession()` | Verify without navigation    |
-| `verify()`        | Verify with legacy redirect  |
-| `setSession()`    | Establish credentials and user state |
-| `clearSession()`  | Clear credentials, auth state, and Apollo cache |
-| `logout()`        | Clear the session; legacy navigation remains opt-in |
-| `getTokenClaims()`| Safely decode generic JWT claims |
-| `can()`           | Compare one or any of several permission strings |
-| `reset()`         | Reset local auth state       |
+| API                | Purpose                                             |
+| ------------------ | --------------------------------------------------- |
+| `user`             | Current authenticated user                          |
+| `isAuthenticated`  | Authentication state                                |
+| `loading`          | Session verification state                          |
+| `error`            | Verification error                                  |
+| `verifySession()`  | Verify without navigation                           |
+| `verify()`         | Verify with legacy redirect                         |
+| `setSession()`     | Establish credentials and user state                |
+| `clearSession()`   | Clear credentials, auth state, and Apollo cache     |
+| `logout()`         | Clear the session; legacy navigation remains opt-in |
+| `getTokenClaims()` | Safely decode generic JWT claims                    |
+| `can()`            | Compare one or any of several permission strings    |
+| `reset()`          | Reset local auth state                              |
 
 By default, `useAuth` expects the authenticated user at `data.me`.
 
@@ -633,52 +631,52 @@ Most applications only need `endpoint`. Add other options only when required.
 
 ## Common Options
 
-| Option               | Description                    |
-| -------------------- | ------------------------------ |
-| `endpoint`           | Default GraphQL endpoint       |
-| `endPoints`          | Multiple named endpoints       |
-| `tokenKey`           | Access-token key               |
-| `auth`               | Installed current-user/session configuration |
+| Option               | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `endpoint`           | Default GraphQL endpoint                       |
+| `endPoints`          | Multiple named endpoints                       |
+| `tokenKey`           | Access-token key                               |
+| `auth`               | Installed current-user/session configuration   |
 | `sessionMode`        | Token session or server-managed cookie session |
-| `credentials`        | Fetch credential mode for cookie sessions |
-| `formatToken`        | Format authorization token     |
-| `refresh`            | Refresh-token handling         |
-| `allowOffline`       | Enable offline mutations       |
-| `setContext`         | Add request headers/context    |
-| `requestTimeoutMs`   | Request timeout                |
-| `memoryConfig`       | Apollo cache configuration     |
-| `useGETForQueries`   | Send queries with GET          |
-| `apolloUploadConfig` | Upload transport configuration |
+| `credentials`        | Fetch credential mode for cookie sessions      |
+| `formatToken`        | Format authorization token                     |
+| `refresh`            | Refresh-token handling                         |
+| `allowOffline`       | Enable offline mutations                       |
+| `setContext`         | Add request headers/context                    |
+| `requestTimeoutMs`   | Request timeout                                |
+| `memoryConfig`       | Apollo cache configuration                     |
+| `useGETForQueries`   | Send queries with GET                          |
+| `apolloUploadConfig` | Upload transport configuration                 |
 
 ## All Options
 
-| Option               | Purpose                                         |
-| -------------------- | ----------------------------------------------- |
-| `applicationId`      | Stable app identity for persisted state and SSR |
-| `authBoundary`       | Separate authentication contexts                |
-| `endpoint`           | One default GraphQL endpoint                    |
-| `endPoints`          | Multiple named endpoints                        |
-| `fetch`              | Custom `fetch` implementation                   |
-| `requestTimeoutMs`   | Operation timeout                               |
-| `tokenKey`           | Access-token key                                |
-| `sessionMode`        | Token or server-managed cookie session         |
-| `credentials`         | Fetch credential mode                          |
-| `tokenCookie`        | Token-cookie attributes                         |
-| `tokenExpiration`    | Token-cookie expiration                         |
-| `memoryConfig`       | Apollo normalized cache settings                |
-| `useGETForQueries`   | Send queries through GET                        |
-| `apolloClientConfig` | Advanced Apollo Client options                  |
-| `apolloUploadConfig` | Upload-link options                             |
-| `allowOffline`       | Browser offline mutation queue                  |
-| `getSessionId`       | Stable custom session identity                  |
-| `refresh`            | Generated refresh-token contract                |
-| `onLogout`           | Logout/auth failure callback                    |
-| `getToken`           | Read from a custom token store                  |
-| `setToken`           | Persist a custom token store                   |
-| `clearToken`         | Clear a custom token store                      |
+| Option               | Purpose                                                            |
+| -------------------- | ------------------------------------------------------------------ |
+| `applicationId`      | Stable app identity for persisted state and SSR                    |
+| `authBoundary`       | Separate authentication contexts                                   |
+| `endpoint`           | One default GraphQL endpoint                                       |
+| `endPoints`          | Multiple named endpoints                                           |
+| `fetch`              | Custom `fetch` implementation                                      |
+| `requestTimeoutMs`   | Operation timeout                                                  |
+| `tokenKey`           | Access-token key                                                   |
+| `sessionMode`        | Token or server-managed cookie session                             |
+| `credentials`        | Fetch credential mode                                              |
+| `tokenCookie`        | Token-cookie attributes                                            |
+| `tokenExpiration`    | Token-cookie expiration                                            |
+| `memoryConfig`       | Apollo normalized cache settings                                   |
+| `useGETForQueries`   | Send queries through GET                                           |
+| `apolloClientConfig` | Advanced Apollo Client options                                     |
+| `apolloUploadConfig` | Upload-link options                                                |
+| `allowOffline`       | Browser offline mutation queue                                     |
+| `getSessionId`       | Stable custom session identity                                     |
+| `refresh`            | Generated refresh-token contract                                   |
+| `onLogout`           | Logout/auth failure callback                                       |
+| `getToken`           | Read from a custom token store                                     |
+| `setToken`           | Persist a custom token store                                       |
+| `clearToken`         | Clear a custom token store                                         |
 | `auth`               | Installed auth configuration (`useMeQuery`, selector, permissions) |
-| `formatToken`        | Format the authorization value                  |
-| `setContext`         | Per-operation Apollo context                    |
+| `formatToken`        | Format the authorization value                                     |
+| `setContext`         | Per-operation Apollo context                                       |
 
 # Vite Plugin Options
 
@@ -766,19 +764,19 @@ Use a stable login identity for `getSessionId`, not a rotating access token.
 
 ## Authentication APIs
 
-| API                 | Purpose                          |
-| ------------------- | -------------------------------- |
-| `useAuth`           | Authenticated user/session state |
-| `createAuthRuntime` | Lower-level auth runtime         |
+| API                 | Purpose                                             |
+| ------------------- | --------------------------------------------------- |
+| `useAuth`           | Authenticated user/session state                    |
+| `createAuthRuntime` | Lower-level auth runtime                            |
 | `setSession`        | Establish access/refresh credentials and user state |
-| `clearSession`      | Clear credentials, auth state, and Apollo cache |
-| `verifySession`     | Non-navigating active-session verification |
-| `getTokenClaims`    | Safe generic JWT claim decoding |
-| `can`               | Generic any-match permission comparison |
-| `setToken`          | Save access/refresh tokens       |
-| `getToken`          | Read access token                |
-| `getRefreshToken`   | Read refresh token               |
-| `removeToken`       | Remove access/refresh tokens     |
+| `clearSession`      | Clear credentials, auth state, and Apollo cache     |
+| `verifySession`     | Non-navigating active-session verification          |
+| `getTokenClaims`    | Safe generic JWT claim decoding                     |
+| `can`               | Generic any-match permission comparison             |
+| `setToken`          | Save access/refresh tokens                          |
+| `getToken`          | Read access token                                   |
+| `getRefreshToken`   | Read refresh token                                  |
+| `removeToken`       | Remove access/refresh tokens                        |
 
 ## Runtime APIs
 
