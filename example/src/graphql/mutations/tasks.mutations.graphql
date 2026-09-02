@@ -1,0 +1,21 @@
+mutation CreateTask($title: String!) {
+  createTask(title: $title) {
+    id
+    title
+    done
+    ownerId
+  }
+}
+
+mutation UpdateTask($id: ID!, $title: String, $done: Boolean) {
+  updateTask(id: $id, title: $title, done: $done) {
+    id
+    title
+    done
+    ownerId
+  }
+}
+
+mutation DeleteTask($id: ID!) {
+  deleteTask(id: $id)
+}
