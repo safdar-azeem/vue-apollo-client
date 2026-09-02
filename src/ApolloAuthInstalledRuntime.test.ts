@@ -329,10 +329,13 @@ describe('installed auth runtime', () => {
       onError: () => ({ off: () => undefined }),
       stop: () => undefined,
     }))
-    const runtime = createApollo(authConfig(useMeQuery) as any, {
+    const runtime = createApollo(authConfig(useMeQuery, {
+      // Installed auth reads credentials from its auth configuration (or the
+      // normal cookie store), not from the createApollo runtime options.
+      getToken: () => 'token',
+    }) as any, {
       server: false,
       registerGlobal: false,
-      getToken: () => 'token',
     })
     const app = createApp({ render: () => h('main') })
     app.use(runtime)
