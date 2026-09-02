@@ -1,6 +1,5 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { GraphQLError } from 'graphql'
 import { createSchema, createYoga } from 'graphql-yoga'
 
@@ -70,7 +69,46 @@ const requirePermission = (request: Request, permission: string) => {
   return user
 }
 
-const typeDefs = await readFile(new URL('../src/graphql/schema.graphql', import.meta.url), 'utf8')
+const typeDefs = /* GraphQL */ `
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    permissions: [String!]!
+  }
+
+  type Task {
+    id: ID!
+    title: String!
+    done: Boolean!
+    ownerId: ID!
+  }
+
+  type Session {
+    token: String!
+    refreshToken: String!
+    user: User!
+  }
+
+  type RefreshResult {
+    token: String!
+    refreshToken: String!
+  }
+
+  type Query {
+    me: User
+    tasks: [Task!]!
+    task(id: ID!): Task
+  }
+
+  type Mutation {
+    login(email: String!, password: String!): Session!
+    refreshSession(refreshToken: String!): RefreshResult!
+    createTask(title: String!): Task!
+    updateTask(id: ID!, title: String, done: Boolean): Task!
+    deleteTask(id: ID!): Boolean!
+  }
+`
 
 type Context = { request: Request }
 
