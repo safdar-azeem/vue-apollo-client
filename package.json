@@ -13,14 +13,14 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/vue-apollo-client.mjs",
-      "require": "./dist/vue-apollo-client.cjs",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/vue-apollo-client.cjs"
     },
     "./vite": {
+      "types": "./dist/vite/index.d.ts",
       "import": "./dist/vite.mjs",
-      "require": "./dist/vite.cjs",
-      "types": "./dist/vite/index.d.ts"
+      "require": "./dist/vite.cjs"
     }
   },
   "repository": {
