@@ -97,6 +97,7 @@ button {
 .task-main small { margin-top: 3px; color: #999; }
 .task-main .done { color: #8a8a8a; text-decoration: line-through; }
 .task-actions { display: flex; gap: 6px; }
+.task-error { grid-column: 1 / -1; margin: 0; }
 .inline-input { padding: 7px 8px; }
 .details { border-top: 1px solid #e3e3de; margin-top: 20px; padding-top: 20px; }
 .details h3 { margin: 0 0 10px; }
