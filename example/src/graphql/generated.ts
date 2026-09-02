@@ -98,11 +98,6 @@ export type User = {
   permissions: Array<Scalars['String']['output']>;
 };
 
-export type MeQueryVariables = Exact<{ [key: string]: never; }>;
-
-
-export type MeQuery = { me: { id: string, name: string, email: string, permissions: Array<string> } | null };
-
 export type LoginMutationVariables = Exact<{
   email: string;
   password: string;
@@ -117,18 +112,6 @@ export type RefreshSessionMutationVariables = Exact<{
 
 
 export type RefreshSessionMutation = { refreshSession: { token: string, refreshToken: string } };
-
-export type GetTasksQueryVariables = Exact<{ [key: string]: never; }>;
-
-
-export type GetTasksQuery = { tasks: Array<{ id: string, title: string, done: boolean, ownerId: string }> };
-
-export type GetTaskQueryVariables = Exact<{
-  id: string | number;
-}>;
-
-
-export type GetTaskQuery = { task: { id: string, title: string, done: boolean, ownerId: string } | null };
 
 export type CreateTaskMutationVariables = Exact<{
   title: string;
@@ -153,37 +136,24 @@ export type DeleteTaskMutationVariables = Exact<{
 
 export type DeleteTaskMutation = { deleteTask: boolean };
 
+export type MeQueryVariables = Exact<{ [key: string]: never; }>;
 
-export const MeDocument = gql`
-    query Me {
-  me {
-    id
-    name
-    email
-    permissions
-  }
-}
-    `;
 
-/**
- * __useMeQuery__
- *
- * To run a query within a Vue component, call `useMeQuery` and pass it any options that fit your needs.
- * When your component renders, `useMeQuery` returns an object from Apollo Client that contains result, loading and error properties
- * you can use to render your UI.
- *
- * @param options that will be passed into the query, supported options are listed on: https://v4.apollo.vuejs.org/guide-composable/query.html#options;
- *
- * @example
- * const { result, loading, error } = useMeQuery();
- */
-export function useMeQuery(options: VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> = {}) {
-  return VueApolloComposable.useQuery<MeQuery, MeQueryVariables>(MeDocument, {}, options);
-}
-export function useMeLazyQuery(options: VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> = {}) {
-  return VueApolloComposable.useLazyQuery<MeQuery, MeQueryVariables>(MeDocument, {}, options);
-}
-export type MeQueryCompositionFunctionResult = VueApolloComposable.UseQueryReturn<MeQuery, MeQueryVariables>;
+export type MeQuery = { me: { id: string, name: string, email: string, permissions: Array<string> } | null };
+
+export type GetTasksQueryVariables = Exact<{ [key: string]: never; }>;
+
+
+export type GetTasksQuery = { tasks: Array<{ id: string, title: string, done: boolean, ownerId: string }> };
+
+export type GetTaskQueryVariables = Exact<{
+  id: string | number;
+}>;
+
+
+export type GetTaskQuery = { task: { id: string, title: string, done: boolean, ownerId: string } | null };
+
+
 export const LoginDocument = gql`
     mutation Login($email: String!, $password: String!) {
   login(email: $email, password: $password) {
@@ -251,69 +221,6 @@ export function useRefreshSessionMutation(options: VueApolloComposable.UseMutati
   return VueApolloComposable.useMutation<RefreshSessionMutation, RefreshSessionMutationVariables>(RefreshSessionDocument, options);
 }
 export type RefreshSessionMutationCompositionFunctionResult = VueApolloComposable.UseMutationReturn<RefreshSessionMutation, RefreshSessionMutationVariables>;
-export const GetTasksDocument = gql`
-    query GetTasks {
-  tasks {
-    id
-    title
-    done
-    ownerId
-  }
-}
-    `;
-
-/**
- * __useGetTasksQuery__
- *
- * To run a query within a Vue component, call `useGetTasksQuery` and pass it any options that fit your needs.
- * When your component renders, `useGetTasksQuery` returns an object from Apollo Client that contains result, loading and error properties
- * you can use to render your UI.
- *
- * @param options that will be passed into the query, supported options are listed on: https://v4.apollo.vuejs.org/guide-composable/query.html#options;
- *
- * @example
- * const { result, loading, error } = useGetTasksQuery();
- */
-export function useGetTasksQuery(options: VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> = {}) {
-  return VueApolloComposable.useQuery<GetTasksQuery, GetTasksQueryVariables>(GetTasksDocument, {}, options);
-}
-export function useGetTasksLazyQuery(options: VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> = {}) {
-  return VueApolloComposable.useLazyQuery<GetTasksQuery, GetTasksQueryVariables>(GetTasksDocument, {}, options);
-}
-export type GetTasksQueryCompositionFunctionResult = VueApolloComposable.UseQueryReturn<GetTasksQuery, GetTasksQueryVariables>;
-export const GetTaskDocument = gql`
-    query GetTask($id: ID!) {
-  task(id: $id) {
-    id
-    title
-    done
-    ownerId
-  }
-}
-    `;
-
-/**
- * __useGetTaskQuery__
- *
- * To run a query within a Vue component, call `useGetTaskQuery` and pass it any options that fit your needs.
- * When your component renders, `useGetTaskQuery` returns an object from Apollo Client that contains result, loading and error properties
- * you can use to render your UI.
- *
- * @param variables that will be passed into the query
- * @param options that will be passed into the query, supported options are listed on: https://v4.apollo.vuejs.org/guide-composable/query.html#options;
- *
- * @example
- * const { result, loading, error } = useGetTaskQuery({
- *   id: // value for 'id'
- * });
- */
-export function useGetTaskQuery(variables: GetTaskQueryVariables | VueCompositionApi.Ref<GetTaskQueryVariables> | ReactiveFunction<GetTaskQueryVariables>, options: VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> = {}) {
-  return VueApolloComposable.useQuery<GetTaskQuery, GetTaskQueryVariables>(GetTaskDocument, variables, options);
-}
-export function useGetTaskLazyQuery(variables?: GetTaskQueryVariables | VueCompositionApi.Ref<GetTaskQueryVariables> | ReactiveFunction<GetTaskQueryVariables>, options: VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> = {}) {
-  return VueApolloComposable.useLazyQuery<GetTaskQuery, GetTaskQueryVariables>(GetTaskDocument, variables, options);
-}
-export type GetTaskQueryCompositionFunctionResult = VueApolloComposable.UseQueryReturn<GetTaskQuery, GetTaskQueryVariables>;
 export const CreateTaskDocument = gql`
     mutation CreateTask($title: String!) {
   createTask(title: $title) {
@@ -407,3 +314,96 @@ export function useDeleteTaskMutation(options: VueApolloComposable.UseMutationOp
   return VueApolloComposable.useMutation<DeleteTaskMutation, DeleteTaskMutationVariables>(DeleteTaskDocument, options);
 }
 export type DeleteTaskMutationCompositionFunctionResult = VueApolloComposable.UseMutationReturn<DeleteTaskMutation, DeleteTaskMutationVariables>;
+export const MeDocument = gql`
+    query Me {
+  me {
+    id
+    name
+    email
+    permissions
+  }
+}
+    `;
+
+/**
+ * __useMeQuery__
+ *
+ * To run a query within a Vue component, call `useMeQuery` and pass it any options that fit your needs.
+ * When your component renders, `useMeQuery` returns an object from Apollo Client that contains result, loading and error properties
+ * you can use to render your UI.
+ *
+ * @param options that will be passed into the query, supported options are listed on: https://v4.apollo.vuejs.org/guide-composable/query.html#options;
+ *
+ * @example
+ * const { result, loading, error } = useMeQuery();
+ */
+export function useMeQuery(options: VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> = {}) {
+  return VueApolloComposable.useQuery<MeQuery, MeQueryVariables>(MeDocument, {}, options);
+}
+export function useMeLazyQuery(options: VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<MeQuery, MeQueryVariables>> = {}) {
+  return VueApolloComposable.useLazyQuery<MeQuery, MeQueryVariables>(MeDocument, {}, options);
+}
+export type MeQueryCompositionFunctionResult = VueApolloComposable.UseQueryReturn<MeQuery, MeQueryVariables>;
+export const GetTasksDocument = gql`
+    query GetTasks {
+  tasks {
+    id
+    title
+    done
+    ownerId
+  }
+}
+    `;
+
+/**
+ * __useGetTasksQuery__
+ *
+ * To run a query within a Vue component, call `useGetTasksQuery` and pass it any options that fit your needs.
+ * When your component renders, `useGetTasksQuery` returns an object from Apollo Client that contains result, loading and error properties
+ * you can use to render your UI.
+ *
+ * @param options that will be passed into the query, supported options are listed on: https://v4.apollo.vuejs.org/guide-composable/query.html#options;
+ *
+ * @example
+ * const { result, loading, error } = useGetTasksQuery();
+ */
+export function useGetTasksQuery(options: VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> = {}) {
+  return VueApolloComposable.useQuery<GetTasksQuery, GetTasksQueryVariables>(GetTasksDocument, {}, options);
+}
+export function useGetTasksLazyQuery(options: VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTasksQuery, GetTasksQueryVariables>> = {}) {
+  return VueApolloComposable.useLazyQuery<GetTasksQuery, GetTasksQueryVariables>(GetTasksDocument, {}, options);
+}
+export type GetTasksQueryCompositionFunctionResult = VueApolloComposable.UseQueryReturn<GetTasksQuery, GetTasksQueryVariables>;
+export const GetTaskDocument = gql`
+    query GetTask($id: ID!) {
+  task(id: $id) {
+    id
+    title
+    done
+    ownerId
+  }
+}
+    `;
+
+/**
+ * __useGetTaskQuery__
+ *
+ * To run a query within a Vue component, call `useGetTaskQuery` and pass it any options that fit your needs.
+ * When your component renders, `useGetTaskQuery` returns an object from Apollo Client that contains result, loading and error properties
+ * you can use to render your UI.
+ *
+ * @param variables that will be passed into the query
+ * @param options that will be passed into the query, supported options are listed on: https://v4.apollo.vuejs.org/guide-composable/query.html#options;
+ *
+ * @example
+ * const { result, loading, error } = useGetTaskQuery({
+ *   id: // value for 'id'
+ * });
+ */
+export function useGetTaskQuery(variables: GetTaskQueryVariables | VueCompositionApi.Ref<GetTaskQueryVariables> | ReactiveFunction<GetTaskQueryVariables>, options: VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> = {}) {
+  return VueApolloComposable.useQuery<GetTaskQuery, GetTaskQueryVariables>(GetTaskDocument, variables, options);
+}
+export function useGetTaskLazyQuery(variables?: GetTaskQueryVariables | VueCompositionApi.Ref<GetTaskQueryVariables> | ReactiveFunction<GetTaskQueryVariables>, options: VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables> | VueCompositionApi.Ref<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> | ReactiveFunction<VueApolloComposable.UseQueryOptions<GetTaskQuery, GetTaskQueryVariables>> = {}) {
+  return VueApolloComposable.useLazyQuery<GetTaskQuery, GetTaskQueryVariables>(GetTaskDocument, variables, options);
+}
+export type GetTaskQueryCompositionFunctionResult = VueApolloComposable.UseQueryReturn<GetTaskQuery, GetTaskQueryVariables>;
