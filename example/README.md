@@ -44,9 +44,16 @@ GraphQL API:
 http://localhost:4000/graphql
 ```
 
-`yarn dev` starts both the tiny GraphQL API and Vite application.
+`yarn dev` starts both the tiny GraphQL API and Vite application. The web
+process waits 20 seconds before Vite starts codegen, giving the API time to
+start before remote schema introspection runs.
 
 The `vueApollo()` Vite plugin watches the `.graphql` operation files and regenerates `src/graphql/generated.ts` during development. The generated file is committed so a clean checkout can build immediately; it is codegen-owned and should never be edited manually.
+
+The demo API owns its schema in `server/index.ts`. During development,
+`vueApollo()` introspects the GraphQL API at `VITE_GRAPHQL_ENDPOINT` (defaulting
+to `http://localhost:4000/graphql`) for code generation; the frontend does not
+maintain a duplicate schema file.
 
 ## Repository tree
 
@@ -75,7 +82,6 @@ vue-apollo-client-example/
     │   └── TaskList.vue
     └── graphql/
         ├── generated.ts
-        ├── schema.graphql
         ├── queries/
         │   ├── auth.graphql
         │   └── tasks.graphql
@@ -89,16 +95,28 @@ vue-apollo-client-example/
 `vite.config.ts`:
 
 ```ts
+import { defineConfig, loadEnv } from 'vite'
 import { vueApollo } from 'vue-apollo-client/vite'
 
-vueApollo({
-  schema: './src/graphql/schema.graphql',
-  documents: ['src/graphql/**/*.graphql'],
-  output: 'src/graphql/generated.ts',
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_')
+  const graphqlEndpoint = env.VITE_GRAPHQL_ENDPOINT || 'http://localhost:4000/graphql'
+
+  return {
+    plugins: [
+      vueApollo({
+        schema: graphqlEndpoint,
+        documents: ['src/graphql/**/*.graphql'],
+        output: 'src/graphql/generated.ts',
+      }),
+    ],
+  }
 })
 ```
 
-The important files developers should edit are the `.graphql` operation files — not `generated.ts`.
+The actual Vite config resolves `VITE_GRAPHQL_ENDPOINT` with Vite's `loadEnv()`.
+The important files developers should edit are the `.graphql` operation files —
+not `generated.ts` or a frontend schema copy.
 
 ## 2. Install Apollo once
 
