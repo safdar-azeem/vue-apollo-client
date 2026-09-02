@@ -74,9 +74,12 @@ vue-apollo-client-example/
     │   ├── TaskItem.vue
     │   └── TaskList.vue
     └── graphql/
-        ├── schema.graphql
         ├── generated.ts
-        └── operations/
+        ├── schema.graphql
+        ├── queries/
+        │   ├── auth.graphql
+        │   └── tasks.graphql
+        └── mutations/
             ├── auth.graphql
             └── tasks.graphql
 ```
@@ -90,7 +93,7 @@ import { vueApollo } from 'vue-apollo-client/vite'
 
 vueApollo({
   schema: './src/graphql/schema.graphql',
-  documents: ['src/graphql/operations/**/*.graphql'],
+  documents: ['src/graphql/**/*.graphql'],
   output: 'src/graphql/generated.ts',
 })
 ```
