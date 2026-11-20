@@ -180,7 +180,15 @@ export const setToken = (
 
 	// Use the key properly by checking config
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey, options)
+	// When writing a shared parent-domain cookie, clear any host-only shadow
+	// cookie so the browser does not continue sending a stale host-only value
+	// ahead of the shared domain cookie. Never delete parent-domain cookies
+	// when writing a host-only cookie.
+	if (normalizeCookieDomain(finalOptions.domain)) {
+		const hostOnlyOptions: CookieAttributes = { ...finalOptions, domain: undefined }
+		Cookies.remove(tokenKey, hostOnlyOptions)
+		Cookies.remove(`${tokenKey}_refresh`, hostOnlyOptions)
+	}
 
 	Cookies.set(tokenKey, token, finalOptions)
 
@@ -190,34 +198,36 @@ export const setToken = (
 	}
 }
 
-export const getToken = (key = '', options?: CookieAttributes) => {
+export const getToken = (key = '', _options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey, options)
 	return Cookies.get(tokenKey)
 }
 
-export const getRefreshToken = (key = '', options?: CookieAttributes) => {
+export const getRefreshToken = (key = '', _options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey, options)
 	return Cookies.get(`${tokenKey}_refresh`)
 }
 
 /**
- * Remove the auth tokens. Host-only cookies are removed first, then
- * legacy parent-domain variants are cleared so old shared cookies
- * cannot leak between the main application and other subdomains.
+ * Remove the auth tokens. Both the configured cookie scope and any host-only
+ * or legacy parent-domain variants are cleared on explicit sign-out so stale
+ * cookies cannot survive termination.
  */
 export const removeToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
 	const finalOptions = getCookieOptions(options)
 	Cookies.remove(tokenKey, finalOptions)
 	Cookies.remove(`${tokenKey}_refresh`, finalOptions)
+	if (normalizeCookieDomain(finalOptions.domain)) {
+		const hostOnlyOptions: CookieAttributes = { ...finalOptions, domain: undefined }
+		Cookies.remove(tokenKey, hostOnlyOptions)
+		Cookies.remove(`${tokenKey}_refresh`, hostOnlyOptions)
+	}
 	removeLegacyDomainCookies(tokenKey, options)
 }
 
 export const stashToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey, options)
 	const token = Cookies.get(tokenKey)
 	const refresh = Cookies.get(`${tokenKey}_refresh`)
 
@@ -241,14 +251,30 @@ export const stashToken = (key = '', options?: CookieAttributes) => {
 
 export const restoreStashedToken = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	removeLegacyDomainCookies(tokenKey, options)
 	const tempToken = Cookies.get(`temp_${tokenKey}`)
 	const tempRefresh = Cookies.get(`temp_${tokenKey}_refresh`)
 
-	if (tempToken) {
+	if (!tempToken && !tempRefresh) return
+
+	const activeToken = Cookies.get(tokenKey)
+	const activeRefresh = Cookies.get(`${tokenKey}_refresh`)
+
+	// Never overwrite an already active session with legacy stashed cookies.
+	if (!activeToken && !activeRefresh && tempToken) {
 		setToken({ key, token: tempToken, refreshToken: tempRefresh || '', options })
-		Cookies.remove(`temp_${tokenKey}`, getCookieOptions(options))
-		Cookies.remove(`temp_${tokenKey}_refresh`, getCookieOptions(options))
+	}
+
+	const removalOptions = getCookieOptions(options)
+	Cookies.remove(`temp_${tokenKey}`, removalOptions)
+	Cookies.remove(`temp_${tokenKey}_refresh`, removalOptions)
+	if (normalizeCookieDomain(removalOptions.domain)) {
+		const hostOnlyOptions: CookieAttributes = { ...removalOptions, domain: undefined }
+		Cookies.remove(`temp_${tokenKey}`, hostOnlyOptions)
+		Cookies.remove(`temp_${tokenKey}_refresh`, hostOnlyOptions)
+	}
+	for (const legacyOptions of getLegacyDomainRemovalOptions(options)) {
+		Cookies.remove(`temp_${tokenKey}`, legacyOptions)
+		Cookies.remove(`temp_${tokenKey}_refresh`, legacyOptions)
 	}
 }
 

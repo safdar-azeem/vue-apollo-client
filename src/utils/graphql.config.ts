@@ -3,6 +3,7 @@ import {
   ApolloClient,
   ApolloLink,
   InMemoryCache,
+  Observable,
   type ApolloClientOptions,
   type InMemoryCacheConfig,
   type NormalizedCacheObject,
@@ -15,7 +16,6 @@ import {
   getCookieValueFromHeader,
   getToken as getCookieToken,
   getRefreshToken as getCookieRefreshToken,
-  stashToken,
   restoreStashedToken,
   removeToken,
   setToken,
@@ -25,7 +25,12 @@ import type {
   VueApolloRuntimeOptions,
   TokenCookieOptions,
 } from '../types'
-import { resolveApolloSessionCacheKey } from '../ApolloSessionRuntime'
+import {
+  createCredentialMutationCoordinator,
+  resolveApolloSessionCacheKey,
+  resolveJwtAccountIdentity,
+  type CredentialMutationCoordinator,
+} from '../ApolloSessionRuntime'
 
 export type SetGraphqlContext = ({
   operationName,
@@ -58,6 +63,7 @@ interface ConfigProps {
   getSessionId?: () => string | null | undefined
   sessionMode?: 'token' | 'cookie'
   credentials?: RequestCredentials
+  credentialCoordinator?: CredentialMutationCoordinator
   runtime?: VueApolloRuntimeOptions
 }
 
@@ -111,8 +117,11 @@ export const graphqlConfig = ({
   getSessionId,
   sessionMode,
   credentials,
+  credentialCoordinator: providedCredentialCoordinator,
   runtime = {},
 }: ConfigProps): Record<string, ApolloClient<NormalizedCacheObject>> => {
+  const credentialCoordinator =
+    providedCredentialCoordinator ?? createCredentialMutationCoordinator()
   const server = runtime.server ?? typeof window === 'undefined'
   const readRequestHeader = (name: string): string | undefined => {
     const entry = Object.entries(runtime.requestHeaders ?? runtime.headers ?? {})
@@ -179,8 +188,45 @@ export const graphqlConfig = ({
     return removeConfiguredToken()
   }
 
+  interface RefreshOutcome {
+    token: string
+    source: 'refreshed' | 'external'
+  }
+
   const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {}
-  const refreshPromises = new Map<string, Promise<string>>()
+  const refreshPromises = new Map<string, Promise<RefreshOutcome>>()
+  // Tracks access tokens directly rotated by this runtime in the current epoch
+  // so concurrent operations in the same runtime can establish continuity,
+  // while externally replaced credentials (e.g. logout + re-login in another
+  // Builto app) are never treated as proof of session continuity for mutations.
+  const inRuntimeRotations = new Map<string, { token: string; epoch: number }>()
+  const recordInRuntimeRotation = (fromToken: string, toToken: string, epoch: number) => {
+    if (!fromToken || !toToken || fromToken === toToken) return
+    inRuntimeRotations.set(fromToken, { token: toToken, epoch })
+    if (inRuntimeRotations.size > 8) {
+      const oldest = inRuntimeRotations.keys().next().value
+      if (oldest !== undefined) inRuntimeRotations.delete(oldest)
+    }
+  }
+  const hasInRuntimeContinuity = (fromToken: string, toToken: string, epoch: number): boolean => {
+    if (!fromToken || !toToken) return false
+    let cursor = fromToken
+    for (let hop = 0; hop < 8; hop += 1) {
+      const next = inRuntimeRotations.get(cursor)
+      if (!next || next.epoch !== epoch) return false
+      if (next.token === toToken) return true
+      cursor = next.token
+    }
+    return false
+  }
+  const isMutationOperation = (operation: { query?: { definitions?: readonly any[] } }): boolean =>
+    Boolean(
+      operation.query?.definitions?.some(
+        (definition: any) =>
+          definition?.kind === 'OperationDefinition' &&
+          definition?.operation === 'mutation'
+      )
+    )
   const readRefreshToken = () => refresh
     ? refresh.getRefreshToken()
     : server
@@ -224,21 +270,150 @@ export const graphqlConfig = ({
     }))
   }
 
+  const isAuthenticationError = (error: any): boolean => {
+    const graphQLErrors: any[] = error?.graphQLErrors || []
+    if (graphQLErrors.some((entry: any) => {
+      const code = entry?.extensions?.code
+      if (code === 'UNAUTHENTICATED') return true
+      if (code) return false
+      return /unauthori[sz]ed/i.test(entry?.message ?? '')
+    })) return true
+    const statusCode =
+      error?.networkError?.statusCode ??
+      error?.networkError?.result?.status ??
+      error?.statusCode ??
+      error?.status
+    return statusCode === 401
+  }
+
+  /**
+   * Resolve a verifiable account identity for safe stale-token retry checks.
+   * Uses the consumer's `getSessionId()` when provided, otherwise JWT `sub` /
+   * `_id`. Returns `null` for opaque tokens without `getSessionId` so unrelated
+   * opaque tokens are never assumed to belong to the same account.
+   */
+  const resolveAccountIdentity = (
+    token: string | null | undefined,
+    explicitSessionId?: string | null
+  ): string | null => {
+    if (getSessionId) {
+      const source = explicitSessionId !== undefined ? explicitSessionId : getSessionId()
+      return resolveApolloSessionCacheKey(source ?? null)
+    }
+    return resolveJwtAccountIdentity(token)
+  }
+
+  const isSameAccount = (
+    previousIdentity: string | null,
+    currentIdentity: string | null
+  ): boolean => Boolean(previousIdentity && currentIdentity && previousIdentity === currentIdentity)
+
+  // Serialize asynchronous credential cleanup and refresh writes through the
+  // runtime's shared credential barrier so explicit logins / logouts never
+  // overlap with stale writes or deletions, and cleanup errors never become
+  // unhandled rejections or falsely report logout.
+  const clearSessionIfCurrent = (expected: {
+    accessToken: string
+    refreshToken: string
+    sessionKey: string | null
+    epoch: number
+  }): Promise<boolean> =>
+    credentialCoordinator.runExclusive(async (): Promise<boolean> => {
+      if (credentialCoordinator.getEpoch() !== expected.epoch) {
+        return false
+      }
+      const currentAccessToken = readToken() || ''
+      const currentRefreshToken = readRefreshToken() || ''
+      const currentSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
+
+      if (
+        currentAccessToken !== expected.accessToken ||
+        currentRefreshToken !== expected.refreshToken ||
+        currentSessionKey !== expected.sessionKey
+      ) {
+        return false
+      }
+      if (!currentAccessToken && !currentRefreshToken) {
+        return false
+      }
+
+      try {
+        await clearAuthentication()
+      } catch {
+        return false
+      }
+
+      // If a newer session transition started while async cleanup was in
+      // flight, do not wipe stores or report logout.
+      if (
+        credentialCoordinator.getEpoch() !== expected.epoch ||
+        readToken() ||
+        readRefreshToken()
+      ) {
+        return false
+      }
+
+      await clearAllStores()
+      try {
+        onLogout?.()
+      } catch {
+        // Never allow a consumer logout callback to turn cleanup into an
+        // unhandled rejection.
+      }
+      return true
+    })
+
   const authLink = setContextLink(async (operation, previousContext) => {
+    const requestEpoch = credentialCoordinator.getEpoch()
+    const initialToken = readToken() || ''
+    const initialAccountIdentity = resolveAccountIdentity(initialToken)
+    const initialSessionKey = server
+      ? null
+      : resolveApolloSessionCacheKey(readSessionSource() ?? null)
+
+    let didResetCaches = false
     if (!server) {
       // Compare stable session keys — never raw rotating access/refresh tokens.
-      const nextSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
-      if (nextSessionKey !== lastSessionKey) {
+      if (initialSessionKey !== lastSessionKey) {
         const previousSessionKey = lastSessionKey
-        lastSessionKey = nextSessionKey
+        lastSessionKey = initialSessionKey
         // Signed-out → signed-in: nothing authenticated to isolate. Skipping the
         // reset avoids racing the first authed op against its own cache purge.
         if (previousSessionKey != null) {
+          didResetCaches = true
           await resetSessionCaches()
         }
       }
     }
-    const token = readToken() || ''
+
+    let token = initialToken
+    let requestAccountIdentity = initialAccountIdentity
+    let requestSessionKey = initialSessionKey
+
+    if (!server && didResetCaches) {
+      const currentEpoch = credentialCoordinator.getEpoch()
+      const currentToken = readToken() || ''
+      const currentAccountIdentity = resolveAccountIdentity(currentToken)
+      const currentSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
+
+      const ownershipChanged =
+        currentEpoch !== requestEpoch ||
+        currentSessionKey !== initialSessionKey ||
+        currentAccountIdentity !== initialAccountIdentity ||
+        (Boolean(initialToken) && !currentToken) ||
+        (currentToken !== initialToken &&
+          isMutationOperation(operation) &&
+          !hasInRuntimeContinuity(initialToken, currentToken, requestEpoch))
+
+      if (ownershipChanged) {
+        throw new Error('Session changed while preparing authenticated request.')
+      }
+
+      token = currentToken
+      requestAccountIdentity = currentAccountIdentity
+      requestSessionKey = currentSessionKey
+    }
+
     const configuredContext = setContext?.({
       operationName: operation.operationName || '',
       variables: operation.variables,
@@ -248,6 +423,10 @@ export const graphqlConfig = ({
 
     return {
       ...configuredContext,
+      vueApolloRequestToken: token,
+      vueApolloRequestAccountIdentity: requestAccountIdentity,
+      vueApolloRequestSessionKey: requestSessionKey,
+      vueApolloRequestEpoch: requestEpoch,
       headers: {
         ...runtime.headers,
         ...configuredContext?.headers,
@@ -257,62 +436,173 @@ export const graphqlConfig = ({
     }
   })
 
-  const runRefresh = (failedClientId: string): Promise<string> => {
+  const runRefresh = (failedClientId: string): Promise<RefreshOutcome> => {
     const refreshClientId = refresh?.clientId || failedClientId
-    const existing = refreshPromises.get(refreshClientId)
+    const startEpoch = credentialCoordinator.getEpoch()
+    const attemptedAccessToken = readToken() || ''
+    const attemptedRefreshToken = refresh ? (refresh.getRefreshToken() || '') : ''
+    const attemptedSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
+    const attemptedAccountIdentity = resolveAccountIdentity(attemptedAccessToken)
+
+    const refreshKey = [
+      refreshClientId,
+      String(startEpoch),
+      attemptedSessionKey ?? '',
+      refresh ? attemptedRefreshToken : attemptedAccessToken,
+    ].join('\0')
+
+    const existing = refreshPromises.get(refreshKey)
     if (existing) return existing
 
-    const promise = (async () => {
-      if (refresh) {
-        const refreshTokenValue = refresh.getRefreshToken()
-        if (!refreshTokenValue) throw new Error('No refresh token is available.')
-        let data: unknown
-        if (refresh.useMutation) {
-          const createMutation = () => refresh.useMutation!({
-            clientId: refreshClientId,
-            context: { vueApolloSkipRefresh: true },
-            errorPolicy: 'none',
-          })
-          const mutation = runtime.runWithContext
-            ? runtime.runWithContext(createMutation)
-            : createMutation()
-          const result = await mutation.mutate(
-            refresh.createVariables(refreshTokenValue),
-            { context: { vueApolloSkipRefresh: true }, errorPolicy: 'none' }
-          )
-          data = result?.data
-        } else if (refresh.document) {
-          const refreshClient = clients[refreshClientId]
-          if (!refreshClient) {
-            throw new Error(`Apollo refresh client "${refreshClientId}" is not installed.`)
+    let promise!: Promise<RefreshOutcome>
+    promise = (async (): Promise<RefreshOutcome> => {
+      let refreshedTokens: { token: string; refreshToken?: string | null } | null = null
+
+      try {
+        if (refresh) {
+          if (!attemptedRefreshToken) {
+            throw new Error('No refresh token is available.')
           }
-          const result = await refreshClient.mutate({
-            mutation: refresh.document,
-            variables: refresh.createVariables(refreshTokenValue),
-            errorPolicy: 'none',
-            context: { vueApolloSkipRefresh: true },
-          })
-          data = result.data
+          let data: unknown
+          if (refresh.useMutation) {
+            const createMutation = () => refresh.useMutation!({
+              clientId: refreshClientId,
+              context: { vueApolloSkipRefresh: true },
+              errorPolicy: 'none',
+            })
+            const mutation = runtime.runWithContext
+              ? runtime.runWithContext(createMutation)
+              : createMutation()
+            const result = await mutation.mutate(
+              refresh.createVariables(attemptedRefreshToken),
+              { context: { vueApolloSkipRefresh: true }, errorPolicy: 'none' }
+            )
+            data = result?.data
+          } else if (refresh.document) {
+            const refreshClient = clients[refreshClientId]
+            if (!refreshClient) {
+              throw new Error(`Apollo refresh client "${refreshClientId}" is not installed.`)
+            }
+            const result = await refreshClient.mutate({
+              mutation: refresh.document,
+              variables: refresh.createVariables(attemptedRefreshToken),
+              errorPolicy: 'none',
+              context: { vueApolloSkipRefresh: true },
+            })
+            data = result.data
+          } else {
+            throw new Error('Apollo refresh requires a generated mutation composable.')
+          }
+          const tokens = refresh.selectTokens(data)
+          if (!tokens?.token) throw new Error('Token refresh returned no access token.')
+          refreshedTokens = tokens
         } else {
-          throw new Error('Apollo refresh requires a generated mutation composable.')
+          const token = await refreshToken?.()
+          if (!token) throw new Error('Token refresh returned no access token.')
+          refreshedTokens = { token }
         }
-        const tokens = refresh.selectTokens(data)
-        if (!tokens?.token) throw new Error('Token refresh returned no access token.')
-        await refresh.persistTokens(tokens)
-        return tokens.token
+      } catch (error) {
+        // Another tab or Builto application may have already rotated the
+        // single-use refresh token while this request was in flight, or the
+        // user may have signed out / switched accounts.
+        const currentAccessToken = readToken() || ''
+        const currentRefreshToken = refresh ? (refresh.getRefreshToken() || '') : ''
+        const currentSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
+        const currentAccountIdentity = resolveAccountIdentity(currentAccessToken)
+
+        const credentialsUnchanged =
+          credentialCoordinator.getEpoch() === startEpoch &&
+          currentAccessToken === attemptedAccessToken &&
+          (!refresh || currentRefreshToken === attemptedRefreshToken) &&
+          currentSessionKey === attemptedSessionKey
+
+        if (!credentialsUnchanged) {
+          // Only surface the externally replaced access token if no explicit
+          // session transition occurred in this runtime and the token belongs
+          // to the same account. Callers still refuse to replay mutations
+          // unless continuity was established by this runtime.
+          if (
+            credentialCoordinator.getEpoch() === startEpoch &&
+            currentAccessToken &&
+            currentAccessToken !== attemptedAccessToken &&
+            isSameAccount(attemptedAccountIdentity, currentAccountIdentity)
+          ) {
+            return { token: currentAccessToken, source: 'external' }
+          }
+          throw error
+        }
+
+        // Only clear credentials when the attempted credential is still current
+        // and the API proved it invalid, expired, or revoked. Preserve
+        // credentials for network failures, HTTP 5xx, GraphQL
+        // INTERNAL_SERVER_ERROR, RATE_LIMIT_EXCEEDED, and other non-auth errors.
+        if (isAuthenticationError(error)) {
+          await clearSessionIfCurrent({
+            accessToken: attemptedAccessToken,
+            refreshToken: attemptedRefreshToken,
+            sessionKey: attemptedSessionKey,
+            epoch: startEpoch,
+          })
+        }
+        throw error
       }
 
-      const token = await refreshToken?.()
-      if (!token) throw new Error('Token refresh returned no access token.')
-      return token
-    })().finally(() => refreshPromises.delete(refreshClientId))
+      // Coordinate persistence through the shared credential barrier so
+      // explicit login/logout transitions cannot be overwritten by a delayed
+      // refresh write.
+      const resolvedOutcome = await credentialCoordinator.runExclusive(async (): Promise<RefreshOutcome> => {
+        const currentAccessToken = readToken() || ''
+        const currentRefreshToken = refresh ? (refresh.getRefreshToken() || '') : ''
+        const currentSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
+        const currentAccountIdentity = resolveAccountIdentity(currentAccessToken)
 
-    refreshPromises.set(refreshClientId, promise)
+        const sessionStillCurrent =
+          credentialCoordinator.getEpoch() === startEpoch &&
+          currentAccessToken === attemptedAccessToken &&
+          (!refresh || currentRefreshToken === attemptedRefreshToken) &&
+          currentSessionKey === attemptedSessionKey
+
+        if (!sessionStillCurrent) {
+          if (
+            credentialCoordinator.getEpoch() === startEpoch &&
+            currentAccessToken &&
+            currentAccessToken !== attemptedAccessToken &&
+            isSameAccount(attemptedAccountIdentity, currentAccountIdentity)
+          ) {
+            return { token: currentAccessToken, source: 'external' }
+          }
+          throw new Error('Session changed while refreshing credentials.')
+        }
+
+        if (refresh) {
+          await refresh.persistTokens(refreshedTokens!)
+        }
+
+        // If an explicit login/logout bumped the epoch while async
+        // persistTokens() was suspended, that newer transition is queued right
+        // behind this barrier and will establish the authoritative credentials;
+        // do not retry the stale operation under the old token.
+        if (credentialCoordinator.getEpoch() !== startEpoch) {
+          throw new Error('Session changed while persisting refreshed credentials.')
+        }
+
+        recordInRuntimeRotation(attemptedAccessToken, refreshedTokens!.token, startEpoch)
+        return { token: refreshedTokens!.token, source: 'refreshed' }
+      })
+
+      return resolvedOutcome
+    })().finally(() => {
+      if (refreshPromises.get(refreshKey) === promise) {
+        refreshPromises.delete(refreshKey)
+      }
+    })
+
+    refreshPromises.set(refreshKey, promise)
     return promise
   }
 
   const createErrorLink = (clientId: string) => onError(
-    ({ graphQLErrors, networkError, operation, forward }) => {
+    ({ graphQLErrors, networkError, response, operation, forward }) => {
       if (server) return
 
       const statusCode =
@@ -320,35 +610,9 @@ export const graphqlConfig = ({
         (networkError as any)?.result?.status
       // HTTP 403 and GraphQL FORBIDDEN are authorization outcomes for the
       // current operation. Only an authentication failure may refresh or end
-      // the shared session here.
-      const networkAuthenticationFailure =
-        statusCode === 401
-
-      if (networkError) {
-        if (networkAuthenticationFailure && !readRefreshToken() && !refreshToken) {
-          if (readToken() || readRefreshToken()) {
-            clearAuthentication()
-            void clearAllStores()
-            onLogout?.()
-          }
-          return
-        }
-
-        const message = String(networkError.message || '')
-        const isUnreachable =
-          message.includes('Failed to fetch') ||
-          message.includes('NetworkError') ||
-          message.includes('ECONNREFUSED') ||
-          statusCode === 0 ||
-          statusCode >= 500
-
-        if (isUnreachable && readToken() && !usesCustomTokenStore) {
-          // Stashing is a cookie-specific legacy behavior. Custom token stores
-          // keep ownership of their own offline policy.
-          stashToken(tokenKey, tokenCookie)
-          onLogout?.()
-        }
-      }
+      // the shared session here. Temporary network errors / HTTP 5xx never
+      // stash or remove credentials.
+      const networkAuthenticationFailure = statusCode === 401
 
       const authenticationFailure = graphQLErrors?.some(
         (error) => {
@@ -357,33 +621,131 @@ export const graphqlConfig = ({
             (!code && error.message === 'Unauthorized')
         }
       ) || networkAuthenticationFailure
+
+      if (!authenticationFailure) return
+
+      const operationContext = operation.getContext()
+      if (operationContext?.vueApolloSkipRefresh) return
+
+      const requestToken = String(operationContext?.vueApolloRequestToken || '')
+      const requestAccountIdentity =
+        (operationContext?.vueApolloRequestAccountIdentity as string | null | undefined) ?? null
+      const requestSessionKey =
+        (operationContext?.vueApolloRequestSessionKey as string | null | undefined) ?? null
+      const requestEpoch =
+        typeof operationContext?.vueApolloRequestEpoch === 'number'
+          ? operationContext.vueApolloRequestEpoch
+          : credentialCoordinator.getEpoch()
+      const alreadyRetried = Boolean(operationContext?.vueApolloRetriedAfterRefresh)
+      const currentToken = readToken() || ''
+      const currentAccountIdentity = resolveAccountIdentity(currentToken)
+
+      // If an explicit session transition (logout / login) occurred after this
+      // operation was dispatched, reject the stale operation instead of
+      // retrying it under a newer session — even for the same account.
+      if (credentialCoordinator.getEpoch() !== requestEpoch) {
+        return
+      }
+
+      const isMutation = isMutationOperation(operation)
+
+      // If credentials changed while this operation was in flight (e.g. rotated
+      // or re-logged in by another tab/app with no explicit transition here):
+      // - If THIS runtime rotated `requestToken -> currentToken` in the same
+      //   epoch, session continuity is proven for both queries and mutations.
+      // - Otherwise, matching account IDs alone do NOT prove session
+      //   continuity (another app could have logged out and re-logged in to the
+      //   same account), so never replay a stale mutation under externally
+      //   replaced credentials.
+      if (currentToken !== requestToken) {
+        const sameRuntimeRotation = hasInRuntimeContinuity(
+          requestToken,
+          currentToken,
+          requestEpoch
+        )
+        if (
+          !alreadyRetried &&
+          credentialCoordinator.getEpoch() === requestEpoch &&
+          currentToken &&
+          isSameAccount(requestAccountIdentity, currentAccountIdentity) &&
+          (!isMutation || sameRuntimeRotation)
+        ) {
+          operation.setContext(({ headers = {} }) => ({
+            vueApolloRetriedAfterRefresh: true,
+            vueApolloRequestToken: currentToken,
+            vueApolloRequestAccountIdentity: currentAccountIdentity,
+            vueApolloRequestEpoch: requestEpoch,
+            headers: {
+              ...headers,
+              authorization: formatToken(currentToken),
+            },
+          }))
+          return forward(operation)
+        }
+        return
+      }
+
       const canRefresh = refresh
         ? Boolean(readRefreshToken())
         : Boolean(refreshToken && readToken())
-      if (authenticationFailure && !canRefresh) {
-        void clearAuthentication()
-        void clearAllStores()
-        onLogout?.()
+
+      if (!canRefresh) {
+        if (readToken() || readRefreshToken()) {
+          const expectedRefresh = readRefreshToken() || ''
+          return new Observable((observer) => {
+            const finish = () => {
+              if (networkError) {
+                observer.error(networkError)
+              } else {
+                observer.next(response ?? { errors: graphQLErrors })
+                observer.complete()
+              }
+            }
+            clearSessionIfCurrent({
+              accessToken: requestToken,
+              refreshToken: expectedRefresh,
+              sessionKey: requestSessionKey,
+              epoch: requestEpoch,
+            }).then(finish, finish)
+          })
+        }
         return
       }
-      if (
-        !authenticationFailure ||
-        operation.getContext()?.vueApolloSkipRefresh
-      ) return
 
-      return fromPromise(
-        runRefresh(clientId)
-          .catch((error) => {
-            void clearAuthentication()
-            void clearAllStores()
-            onLogout?.()
-            throw error
-          })
-      ).flatMap((accessToken) => {
+      if (alreadyRetried) {
+        return
+      }
+
+      return fromPromise(runRefresh(clientId)).flatMap((outcome) => {
+        // Reject the stale operation if an explicit logout/login occurred
+        // while refresh was in flight.
+        if (credentialCoordinator.getEpoch() !== requestEpoch) {
+          throw new Error('Session changed while retrying authenticated operation.')
+        }
+        // Never replay a previously dispatched mutation under externally
+        // replaced credentials whose session continuity cannot be established.
+        if (isMutation && outcome.source !== 'refreshed') {
+          throw new Error('Credentials were replaced externally while retrying mutation.')
+        }
+        const nextToken = String(outcome.token)
+        const nextAccountIdentity = resolveAccountIdentity(nextToken)
+        // Guard against forwarding a stale operation if account identity
+        // changed between refresh completion and retry dispatch.
+        if (
+          requestAccountIdentity &&
+          nextAccountIdentity &&
+          requestAccountIdentity !== nextAccountIdentity
+        ) {
+          throw new Error('Account changed while retrying authenticated operation.')
+        }
         operation.setContext(({ headers = {} }) => ({
+          vueApolloRetriedAfterRefresh: true,
+          vueApolloRequestToken: nextToken,
+          vueApolloRequestAccountIdentity: nextAccountIdentity,
+          vueApolloRequestEpoch: requestEpoch,
           headers: {
             ...headers,
-            authorization: formatToken(String(accessToken)),
+            authorization: formatToken(nextToken),
           },
         }))
         return forward(operation)

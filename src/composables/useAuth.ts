@@ -384,6 +384,11 @@ export function createAuthRuntime(
     state.tearingDown = true
     state.sessionVersion += 1
     const version = state.sessionVersion
+    try {
+      resolveRuntime().credentialCoordinator?.bumpEpoch()
+    } catch {
+      // Legacy runtime may not be installed yet.
+    }
     // Invalidate the old request immediately. Verification callers must wait
     // for the authoritative teardown instead of reusing this work.
     state.loading.value = false
@@ -402,7 +407,12 @@ export function createAuthRuntime(
       }
       let credentialError: unknown
       try {
-        await clearCredentials()
+        const coordinator = resolveRuntime().credentialCoordinator
+        if (coordinator) {
+          await coordinator.runExclusive(clearCredentials)
+        } else {
+          await clearCredentials()
+        }
       } catch (error) {
         credentialError = error
       }
@@ -586,6 +596,11 @@ export function createAuthRuntime(
     const previousTransition = state.transitionPromise
     state.sessionVersion += 1
     const version = state.sessionVersion
+    try {
+      resolveRuntime().credentialCoordinator?.bumpEpoch()
+    } catch {
+      // Legacy runtime may not be installed yet.
+    }
     state.hydratedVerificationPending = false
     state.user.value = null
     state.error.value = null
@@ -593,13 +608,25 @@ export function createAuthRuntime(
     state.inflight = null
     state.inflightId = null
     const promise = (async () => {
-      if (previousTransition) await previousTransition
+      if (previousTransition) {
+        try {
+          await previousTransition
+        } catch {
+          // A failed earlier session transition must not abort a newer
+          // independent login; the earlier caller still receives its own error.
+        }
+      }
       try {
         await resolveRuntime().clearStore(clientId)
       } catch {
         // Establishing a session must still succeed when cache cleanup is best effort.
       }
-      await persistSession(session)
+      const coordinator = resolveRuntime().credentialCoordinator
+      if (coordinator) {
+        await coordinator.runExclusive(() => persistSession(session))
+      } else {
+        await persistSession(session)
+      }
       if (version === state.sessionVersion && session.user !== undefined) {
         state.user.value = session.user
       }

@@ -24,6 +24,10 @@ import { createApolloOfflineRuntime, type ApolloOfflineRuntime } from './ApolloO
 import { connectApolloToSsrHost } from './ssrHydration'
 import { normalizeApolloOptions } from './normalize'
 import {
+  createCredentialMutationCoordinator,
+  type CredentialMutationCoordinator,
+} from './ApolloSessionRuntime'
+import {
   createAuthRuntime,
   restoreAuthState as restoreInstalledAuthState,
   type AuthState,
@@ -61,6 +65,8 @@ export interface VueApolloRuntime {
   ) => Promise<FetchResult<TData>>
   clearStore: (clientId?: string) => Promise<void>
   runWithContext: <T>(callback: () => T) => T
+  /** Internal credential-mutation barrier shared by auth and refresh links. */
+  readonly credentialCoordinator?: CredentialMutationCoordinator
   stop: () => void
 }
 
@@ -127,6 +133,7 @@ export const createApollo = (
       ownerApp ? ownerApp.runWithContext(callback) : callback(),
   }
 
+  const credentialCoordinator = createCredentialMutationCoordinator()
   const clients = graphqlConfig({
     endPoints: normalizedOptions.endPoints,
     tokenKey: normalizedOptions.auth?.tokenKey || normalizedOptions.tokenKey,
@@ -146,6 +153,7 @@ export const createApollo = (
     getSessionId: normalizedOptions.getSessionId,
     sessionMode: normalizedOptions.sessionMode || normalizedOptions.auth?.sessionMode,
     credentials: normalizedOptions.credentials,
+    credentialCoordinator,
     runtime: runtimeOptions,
   })
 
@@ -205,6 +213,7 @@ export const createApollo = (
     },
     runWithContext: (callback) =>
       ownerApp ? ownerApp.runWithContext(callback) : callback(),
+    credentialCoordinator,
     stop: () => {
       offline.stop()
       for (const client of Object.values(clients)) client.stop()

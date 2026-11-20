@@ -1,12 +1,66 @@
 /**
+ * Deterministic 64-bit FNV-1a fingerprint (two independent 32-bit lanes) so
+ * opaque tokens and session IDs get distinct cache / offline keys without
+ * persisting raw bearer credentials verbatim in browser storage.
+ */
+const fingerprintOpaqueSession = (value: string): string => {
+  let h1 = 0x811c9dc5
+  let h2 = 0x050c5d1f
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i)
+    h1 ^= code
+    h1 = Math.imul(h1, 0x01000193)
+    h2 ^= code + i
+    h2 = Math.imul(h2, 0x85ebca6b)
+  }
+  return `opaque:${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`
+}
+
+/**
+ * Extract an explicit account identity from a JWT (`sub` or `_id`) when
+ * present. Returns `null` for opaque tokens or JWTs without an account claim.
+ */
+export const resolveJwtAccountIdentity = (
+  token: string | null | undefined
+): string | null => {
+  if (token == null) return null
+  const trimmed = String(token).trim()
+  if (!trimmed) return null
+
+  const parts = trimmed.split('.')
+  if (parts.length !== 3 || !parts[0] || !parts[1]) return null
+
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = `${base64}${'='.repeat((4 - (base64.length % 4)) % 4)}`
+    const json =
+      typeof atob === 'function'
+        ? atob(padded)
+        : Buffer.from(padded, 'base64').toString('utf8')
+    const payload = JSON.parse(json) as { sub?: unknown; _id?: unknown }
+    if (typeof payload.sub === 'string' && payload.sub.trim()) {
+      return `sub:${payload.sub.trim()}`
+    }
+    if (typeof payload._id === 'string' && payload._id.trim()) {
+      return `sub:${payload._id.trim()}`
+    }
+  } catch {
+    // Opaque or non-JSON payload.
+  }
+
+  return null
+}
+
+/**
  * Normalize a consumer `getSessionId()` value into a stable cache / offline key.
  *
  * Apps often pass access or refresh tokens here. Those rotate on every refresh,
  * which must NOT wipe the Apollo store or drop the offline queue mid-flight
  * (Apollo invariant #42: "Store reset while query was in flight").
  *
- * - JWT with `sub` / `sid`: use that claim (stable for the browser session).
- * - Opaque tokens: one signed-in bucket (`authenticated`) so rotation is ignored.
+ * - JWT with `sub` / `_id` / `sid`: use that claim (stable for the browser session).
+ * - Opaque tokens / explicit session IDs: fingerprint the value so distinct
+ *   opaque accounts never share one cache key.
  * - Empty / missing: signed out (`null`).
  */
 export const resolveApolloSessionCacheKey = (
@@ -25,9 +79,12 @@ export const resolveApolloSessionCacheKey = (
         typeof atob === 'function'
           ? atob(padded)
           : Buffer.from(padded, 'base64').toString('utf8')
-      const payload = JSON.parse(json) as { sub?: unknown; sid?: unknown }
+      const payload = JSON.parse(json) as { sub?: unknown; _id?: unknown; sid?: unknown }
       if (typeof payload.sub === 'string' && payload.sub.trim()) {
         return `sub:${payload.sub.trim()}`
+      }
+      if (typeof payload._id === 'string' && payload._id.trim()) {
+        return `sub:${payload._id.trim()}`
       }
       if (typeof payload.sid === 'string' && payload.sid.trim()) {
         return `sid:${payload.sid.trim()}`
@@ -37,7 +94,31 @@ export const resolveApolloSessionCacheKey = (
     }
   }
 
-  return 'authenticated'
+  return fingerprintOpaqueSession(trimmed)
+}
+
+export interface CredentialMutationCoordinator {
+  getEpoch: () => number
+  bumpEpoch: () => number
+  runExclusive: <T>(task: () => Promise<T> | T) => Promise<T>
+}
+
+export const createCredentialMutationCoordinator = (): CredentialMutationCoordinator => {
+  let epoch = 0
+  let queue: Promise<void> = Promise.resolve()
+
+  return {
+    getEpoch: () => epoch,
+    bumpEpoch: () => {
+      epoch += 1
+      return epoch
+    },
+    runExclusive: <T>(task: () => Promise<T> | T): Promise<T> => {
+      const next = queue.then(() => task(), () => task())
+      queue = next.then(() => undefined, () => undefined)
+      return next
+    },
+  }
 }
 
 export const isApolloStoreResetError = (error: unknown): boolean => {
