@@ -1,4 +1,8 @@
-import { useLazyQuery as apolloUseLazyQuery, UseQueryReturn } from '@vue/apollo-composable'
+import {
+  useLazyQuery as apolloUseLazyQuery,
+  type UseQueryOptions as ApolloUseQueryOptions,
+  type UseQueryReturn,
+} from '@vue/apollo-composable'
 import { UseQueryOptions } from './useQuery'
 import { ref, Ref, unref } from 'vue'
 import type { OperationVariables } from '@apollo/client/core/index.js'
@@ -65,13 +69,13 @@ export const useLazyQuery = <
     ? 'cache-first'
     : 'cache-and-network'
 
-  const lazyQuery = apolloUseLazyQuery(document, variables, () => {
+  const lazyQuery = apolloUseLazyQuery<TResult, TVariables>(document, variables, () => {
     const opt = resolveOptions()
     return {
       fetchPolicy: defaultFetchPolicy,
       ...(opt as any),
     }
-  }) as any
+  })
 
   const loadingState = ref(false)
 
@@ -98,17 +102,39 @@ export const useLazyQuery = <
     }
   }
 
-  async function fetchOrRefetch(newVariables?: TVariables) {
+  async function fetchOrRefetch(newVariables?: TVariables, refresh = false) {
     if (server) return runServerLoad(newVariables)
 
-    loadingState.value = lazyQuery.result?.value ? false : true
+    loadingState.value = !lazyQuery.result.value
     try {
-      if (!lazyQuery.result?.value) {
-        // @ts-ignore — @vue/apollo-composable load signature
-        await lazyQuery?.load(document, newVariables, options)
-        return lazyQuery.refetch(resolveVariables(newVariables))
+      if (!lazyQuery.forceDisabled.value) {
+        return await lazyQuery.refetch(resolveVariables(newVariables))
       }
-      return lazyQuery.refetch(resolveVariables(newVariables))
+
+      // Vue Apollo's load options are unparameterized, but apply to this query.
+      const opt = resolveOptions() as ApolloUseQueryOptions
+      const fetchPolicy = opt.fetchPolicy ?? defaultFetchPolicy
+      // An explicit first refetch must reach the network even with a restored cache.
+      const servesFromCache =
+        fetchPolicy === 'cache-first' || fetchPolicy === 'cache-only' || fetchPolicy === 'standby'
+      const loadOptions =
+        refresh && servesFromCache
+          ? {
+              fetchPolicy: 'network-only' as const,
+              initialFetchPolicy: fetchPolicy,
+              nextFetchPolicy: opt.nextFetchPolicy ?? fetchPolicy,
+            }
+          : undefined
+      const initialLoad = lazyQuery.load(
+        undefined,
+        newVariables === undefined ? undefined : resolveVariables(newVariables),
+        loadOptions
+      )
+      if (initialLoad === false) return
+
+      const data = await initialLoad
+      // Apollo's lazy load resolves with data alone. Keep the wrapper's result envelope.
+      return { ...lazyQuery.query.value?.getCurrentResult(false), data }
     } finally {
       loadingState.value = false
     }
@@ -116,9 +142,11 @@ export const useLazyQuery = <
 
   return {
     ...lazyQuery,
-    start: fetchOrRefetch,
-    load: fetchOrRefetch,
-    refetch: fetchOrRefetch,
+    start: (variables) => fetchOrRefetch(variables),
+    load: (variables) => fetchOrRefetch(variables),
+    // Keep the inherited refetch signature exposed by this wrapper.
+    refetch: ((variables?: TVariables) =>
+      fetchOrRefetch(variables, true)) as UseQueryReturn<TResult, TVariables>['refetch'],
     loading: loadingState,
   }
 }
