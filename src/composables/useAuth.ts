@@ -1,17 +1,21 @@
-import { computed, effectScope, ref, type ComputedRef, type Ref } from 'vue'
+import { unref, computed, effectScope, ref, type ComputedRef, type Ref } from 'vue'
 import {
   useApolloRuntime,
   type VueApolloRuntime,
 } from '../createApollo'
-import { isApolloStoreResetError } from '../ApolloSessionRuntime'
+import { decodeTokenClaims, sameCredentialOwner, type CredentialOwnership } from '../ApolloSessionRuntime'
+import { verificationDeadline, executeWithAbort } from '../ApolloOperationRuntime'
+import type { DocumentNode } from 'graphql'
 import {
   getCookieValueFromHeader,
   getToken,
+  getRefreshToken,
   removeToken,
   setToken as setCookieToken,
 } from './useCookies'
 import type {
   AuthSession,
+  AuthVerificationEvent,
   VueApolloAuthHydrationState,
   VueApolloAuthOptions,
 } from '../types'
@@ -19,13 +23,15 @@ import type {
 export interface UseAuthOptions extends VueApolloAuthOptions {
   /** Internal initial state supplied by the installed runtime. */
   initialUser?: any | null
-  /** Internal marker for a user restored from SSR hydration. */
-  initialAuthHydrated?: boolean
   /** Internal compatibility switch; installed auth does not navigate implicitly. */
   autoNavigate?: boolean
 }
 
 export interface GeneratedAuthQuery {
+  refetch?: () => Promise<{ data?: any }> | undefined
+  document?: Ref<DocumentNode>
+  options?: { context?: Record<string, any>; clientId?: string } | Ref<{ context?: Record<string, any>; clientId?: string }>
+  variables?: Ref<Record<string, unknown>>
   result?: Ref<any>
   loading?: Ref<boolean>
   onResult: (callback: (result: { data?: any; loading?: boolean }) => void) => {
@@ -36,6 +42,7 @@ export interface GeneratedAuthQuery {
 }
 
 export interface AuthState {
+  status: ComputedRef<'unknown' | 'verifying' | 'authenticated' | 'anonymous' | 'unavailable'>
   user: Ref<any | null>
   isAuthenticated: ComputedRef<boolean>
   loading: Ref<boolean>
@@ -43,9 +50,9 @@ export interface AuthState {
   /** Legacy verification that redirects after an expired session. */
   verify: () => Promise<boolean>
   /** Session verification primitive; never performs navigation. */
-  verifySession: () => Promise<boolean>
+  verifySession: (options?: { signal?: AbortSignal }) => Promise<boolean>
   /** Establish a token or already-established server-managed session. */
-  setSession: (session: AuthSession) => Promise<void>
+  setSession: (session: AuthSession, options?: { signal?: AbortSignal }) => Promise<void>
   /** Idempotent authentication teardown without navigation. */
   clearSession: () => Promise<void>
   /** Logout session mechanics; navigation is only compatibility behavior. */
@@ -69,10 +76,8 @@ interface AuthInternalState extends AuthState {
   nextVerificationId: number
   transitionPromise: Promise<void> | null
   teardownPromise: Promise<void> | null
-  tearingDown: boolean
   expiredNavigation: Promise<void> | null
   sessionVersion: number
-  hydratedVerificationPending: boolean
 }
 
 const runtimeStates = new WeakMap<
@@ -149,87 +154,31 @@ const executeGeneratedAuthQuery = async (
   runtime: VueApolloRuntime,
   createQuery: NonNullable<UseAuthOptions['useMeQuery']>,
   clientId: string,
-  attempt = 0,
+  signal: AbortSignal,
 ): Promise<{ data?: any }> => {
   const scope = effectScope()
-  const createQueryInstance = () => scope.run(() =>
-    createQuery({
-      clientId,
-      fetchPolicy: 'network-only',
-      errorPolicy: 'none',
-    })
-  )!
-  const query = (runtime.runWithContext
-    ? runtime.runWithContext(createQueryInstance)
-    : createQueryInstance()) as GeneratedAuthQuery
+  const enabled = ref(false)
+  const instantiate = () => scope.run(() => createQuery({
+    clientId, enabled, fetchPolicy: 'no-cache', errorPolicy: 'none',
+  })) as GeneratedAuthQuery
+  let query: GeneratedAuthQuery | undefined
   try {
-    return await new Promise<{ data?: any }>((resolve, reject) => {
-      let settled = false
-      let resultSubscription: { off: () => void } = { off: () => {} }
-      let errorSubscription: { off: () => void } = { off: () => {} }
-      const settle = (callback: () => void) => {
-        if (settled) return
-        settled = true
-        resultSubscription.off()
-        errorSubscription.off()
-        callback()
-      }
-      resultSubscription = query.onResult((result) => {
-        if (result.loading) return
-        settle(() => resolve({ data: result.data }))
+    const instance = query = runtime.runWithContext ? runtime.runWithContext(instantiate) : instantiate()
+    if (instance.document?.value) {
+      const queryOptions = unref(instance.options)
+      return await runtime.executeQuery({
+        clientId: queryOptions?.clientId ?? clientId, document: instance.document.value, variables: instance.variables?.value,
+        fetchPolicy: 'no-cache', errorPolicy: 'none', context: { ...queryOptions?.context, queryDeduplication: false }, signal,
       })
-      if (settled) resultSubscription.off()
-      errorSubscription = query.onError((error) => settle(() => reject(error)))
-      if (settled) errorSubscription.off()
-      queueMicrotask(() => {
-        if (!query.loading?.value && query.result?.value !== undefined) {
-          settle(() => resolve({ data: query.result?.value }))
-        }
-      })
-    })
-  } catch (error) {
-    // Apollo invariant #42 can be observed by a watcher during an explicit
-    // session transition. One retry keeps verification deterministic.
-    if (isApolloStoreResetError(error) && attempt < 1) {
-      return executeGeneratedAuthQuery(runtime, createQuery, clientId, attempt + 1)
     }
-    throw error
+    // A watch event may originate from the cache. A third-party adapter must
+    // expose its document or a network refetch promise to prove authority.
+    const network = instance.refetch?.()
+    if (network) return await executeWithAbort(signal, undefined, () => network)
+    throw new Error('The session query must expose its document or a network refetch.')
   } finally {
-    query.stop?.()
+    query?.stop?.()
     scope.stop()
-  }
-}
-
-const decodeBase64Url = (value: string): string | null => {
-  try {
-    const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = `${normalized}${'='.repeat((4 - (normalized.length % 4)) % 4)}`
-    if (typeof atob === 'function') {
-      const binary = atob(padded)
-      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-      return new TextDecoder().decode(bytes)
-    }
-    return Buffer.from(padded, 'base64').toString('utf8')
-  } catch {
-    return null
-  }
-}
-
-const decodeTokenClaims = (
-  token: string | null | undefined
-): Record<string, unknown> | null => {
-  if (!token) return null
-  const encodedPayload = token.split('.')[1]
-  if (!encodedPayload) return null
-  const decoded = decodeBase64Url(encodedPayload)
-  if (!decoded) return null
-  try {
-    const claims = JSON.parse(decoded)
-    return claims && typeof claims === 'object' && !Array.isArray(claims)
-      ? claims as Record<string, unknown>
-      : null
-  } catch {
-    return null
   }
 }
 
@@ -300,7 +249,11 @@ export function createAuthRuntime(
   if (existing) return existing
 
   const user = ref<any | null>(options.initialUser ?? null)
+  const settled = ref(false)
+  let verificationController: AbortController | undefined
   const state: AuthInternalState = {
+    status: computed(() => state.loading.value ? 'verifying' : state.error.value ? 'unavailable'
+      : !settled.value ? 'unknown' : state.user.value ? 'authenticated' : 'anonymous'),
     user,
     isAuthenticated: computed(() => Boolean(user.value)),
     loading: ref(false),
@@ -310,10 +263,8 @@ export function createAuthRuntime(
     nextVerificationId: 0,
     transitionPromise: null,
     teardownPromise: null,
-    tearingDown: false,
     expiredNavigation: null,
     sessionVersion: 0,
-    hydratedVerificationPending: Boolean(options.initialAuthHydrated),
     verify: async () => false,
     verifySession: async () => false,
     setSession: async () => undefined,
@@ -372,75 +323,76 @@ export function createAuthRuntime(
     if (!runtime.server) removeToken(tokenKey(), tokenCookie())
   }
 
-  const teardown = async () => {
-    // A teardown may be followed by a session replacement and then another
-    // teardown. Only deduplicate while the original teardown is still the
-    // newest transition; once another transition owns the chain, this clear
-    // must enqueue its own cleanup after it.
-    if (
-      state.teardownPromise &&
-      state.transitionPromise === state.teardownPromise
-    ) return state.teardownPromise
-    state.tearingDown = true
-    state.sessionVersion += 1
-    const version = state.sessionVersion
-    try {
-      resolveRuntime().credentialCoordinator?.bumpEpoch()
-    } catch {
-      // Legacy runtime may not be installed yet.
-    }
-    // Invalidate the old request immediately. Verification callers must wait
-    // for the authoritative teardown instead of reusing this work.
+  // Keep the barrier until the actual adapter/cache work settles, even when
+  // the caller has timed out. An abort cannot undo an external write.
+  let writer: Promise<void> | undefined
+  let stalledWriter = false
+  const transition = (session?: AuthSession, callerSignal?: AbortSignal): Promise<void> => {
+    if (stalledWriter) return Promise.reject(new Error('The previous session writer is still pending. Retry when it settles.'))
+    if (!session && state.teardownPromise && state.teardownPromise === state.transitionPromise) return state.teardownPromise
+    const runtime = resolveRuntime()
+    const previous = writer
+    const endManaged = session ? undefined : runtime.captureBrowserLogout?.()
+    const version = ++state.sessionVersion
+    runtime.credentialCoordinator?.bumpEpoch()
+    state.user.value = null
+    state.error.value = null
+    settled.value = false
     state.loading.value = false
     state.inflight = null
     state.inflightId = null
-    const previousTransition = state.transitionPromise
-    let promise: Promise<void>
-    promise = (async () => {
-      if (previousTransition) {
-        try {
-          await previousTransition
-        } catch {
-          // Teardown still attempts to remove credentials after a failed
-          // session-establishment transition.
-        }
+    const timeout = verificationDeadline(options.verificationTimeoutMs ?? runtimeOptions().requestTimeoutMs)
+    let raw: Promise<void> | undefined
+    const completion = executeWithAbort(callerSignal, timeout, signal => {
+      const check = () => {
+        signal!.throwIfAborted()
+        if (session && state.sessionVersion !== version) throw new Error('Sign-in was superseded.')
       }
-      let credentialError: unknown
-      try {
-        const coordinator = resolveRuntime().credentialCoordinator
-        if (coordinator) {
-          await coordinator.runExclusive(clearCredentials)
+      const change = async () => {
+        check()
+        if (session) {
+          await runtime.clearStore()
+          check()
+          await persistSession(session, signal!)
+          check()
+          if (runtime.prepareBrowserSession && !capture().sessionKey) throw new Error('Sign-in was superseded.')
+          if (session.user !== undefined) {
+            state.user.value = session.user
+            verifiedOwner = capture()
+            settled.value = true
+          }
         } else {
-          await clearCredentials()
+          try {
+            await (endManaged ?? clearCredentials)()
+          } finally {
+            await runtime.clearStore()
+          }
+          if (version === state.sessionVersion) settled.value = true
         }
-      } catch (error) {
-        credentialError = error
       }
-      try {
-        await resolveRuntime().clearStore(clientId)
-      } catch {
-        // Session teardown continues even if cache cleanup is unavailable.
-      }
-      // A newer transition may have started while this teardown was waiting.
-      // Do not clear the newer session's user or verification state.
-      if (version === state.sessionVersion) {
-        state.user.value = null
-        state.error.value = null
-        state.loading.value = false
-        state.inflight = null
-        state.inflightId = null
-        state.hydratedVerificationPending = false
-      }
-      if (credentialError) throw credentialError
-    })().finally(() => {
-      state.tearingDown = false
-      if (state.teardownPromise === promise) state.teardownPromise = null
-      if (state.transitionPromise === promise) state.transitionPromise = null
+      raw = (async () => {
+        if (previous) await previous.catch(() => undefined)
+        check()
+        if (runtime.credentialCoordinator) await runtime.credentialCoordinator.runExclusive(change)
+        else await change()
+      })().finally(() => {
+        if (writer === raw) { writer = undefined; stalledWriter = false }
+      })
+      writer = raw
+      return raw
+    }).catch(error => {
+      if (raw && writer === raw) stalledWriter = true
+      if (version === state.sessionVersion) state.error.value = error
+      throw error
+    }).finally(() => {
+      if (state.transitionPromise === completion) state.transitionPromise = null
+      if (state.teardownPromise === completion) state.teardownPromise = null
     })
-    state.teardownPromise = promise
-    state.transitionPromise = promise
-    return promise
+    state.transitionPromise = completion
+    if (!session) state.teardownPromise = completion
+    return completion
   }
+  const teardown = () => transition()
 
   const awaitCurrentTransition = async () => {
     const transition = state.transitionPromise
@@ -453,29 +405,52 @@ export function createAuthRuntime(
     }
   }
 
-  const hasSessionCredentials = () => {
+  const capture = (): CredentialOwnership => {
     const runtime = resolveRuntime()
-    if (runtime.server) return true
-    if (configuredSessionMode() === 'cookie') return true
-    return Boolean(readToken() || state.user.value)
+    if (runtime.credentialCoordinator?.capture) return runtime.credentialCoordinator.capture()
+    return {
+      accessToken: readToken() || '',
+      refreshToken: runtimeOptions().refresh?.getRefreshToken?.() ||
+        (!usesCustomTokenStore() && !runtime.server ? getRefreshToken(tokenKey(), tokenCookie()) || '' : ''),
+      sessionKey: runtimeOptions().getSessionId?.() ?? null,
+      epoch: runtime.credentialCoordinator?.getEpoch() ?? 0,
+    }
   }
 
-  const runVerification = (): Promise<VerificationResult> => {
+  const purgeLocalCache = () => {
+    const runtime = resolveRuntime()
+    return runtime.purgeSessionCaches ? runtime.purgeSessionCaches() : runtime.clearStore()
+  }
+  let verifiedOwner: CredentialOwnership | undefined
+  const deadline = () => performance.now() + verificationDeadline(options.verificationTimeoutMs ?? runtimeOptions().requestTimeoutMs)
+  const remaining = (endsAt: number) => Math.max(1, Math.ceil(endsAt - performance.now()))
+  const waitUntil = <T>(promise: Promise<T>, endsAt: number) =>
+    executeWithAbort(undefined, remaining(endsAt), () => promise)
+  const runVerification = (reconciled = false, endsAt = deadline()): Promise<VerificationResult> => {
+    if (stalledWriter) return Promise.reject(new Error('Session writer recovery is pending.'))
     if (state.teardownPromise) {
-      return state.teardownPromise.then(() => runVerification())
+      return waitUntil(state.teardownPromise, endsAt).then(() => runVerification(reconciled, endsAt))
     }
     if (state.transitionPromise) {
-      return state.transitionPromise.then(() => runVerification())
+      return waitUntil(state.transitionPromise, endsAt).then(() => runVerification(reconciled, endsAt))
     }
     if (state.inflight) return state.inflight
-    if (state.hydratedVerificationPending) {
-      state.hydratedVerificationPending = false
-      return Promise.resolve({ valid: Boolean(state.user.value), expired: false })
-    }
-    if (!hasSessionCredentials()) {
+    const owner = capture()
+    if (verifiedOwner && !sameCredentialOwner(verifiedOwner, owner) &&
+        !(owner.sessionKey && owner.sessionKey === verifiedOwner.sessionKey && owner.epoch === verifiedOwner.epoch)) state.user.value = null
+    if (!resolveRuntime().server && configuredSessionMode() !== 'cookie' && !owner.accessToken && !owner.refreshToken) {
       state.user.value = null
       state.error.value = null
-      return Promise.resolve({ valid: false, expired: false })
+      settled.value = true
+      verifiedOwner = owner
+      const version = state.sessionVersion
+      return waitUntil(purgeLocalCache(), endsAt).then(() => {
+        if (version !== state.sessionVersion || !sameCredentialOwner(owner, capture())) {
+          if (reconciled) throw new Error('Session changed during verification.')
+          return runVerification(true, endsAt)
+        }
+        return { valid: false, expired: false }
+      })
     }
     state.loading.value = true
     state.error.value = null
@@ -484,39 +459,93 @@ export function createAuthRuntime(
     const verificationId = ++state.nextVerificationId
     const useMeQuery = options.useMeQuery
     const meQuery = options.meQuery
-    const execution = useMeQuery
-      ? executeGeneratedAuthQuery(runtime, useMeQuery, clientId)
-      : runtime.executeQuery<any>({
-          clientId,
-          document: meQuery!,
-          fetchPolicy: 'network-only',
-          errorPolicy: 'none',
-        })
+    const controller = verificationController = new AbortController()
+    const execution = executeWithAbort(controller.signal,
+      remaining(endsAt),
+      signal => meQuery ? runtime.executeQuery<any>({
+        clientId, document: meQuery, fetchPolicy: 'no-cache', errorPolicy: 'none',
+        context: { queryDeduplication: false }, signal,
+      }) : executeGeneratedAuthQuery(runtime, useMeQuery!, clientId, signal!))
+    const reconcile = async () => {
+      const active = capture()
+      if (!owner.sessionKey || owner.sessionKey !== active.sessionKey || owner.epoch !== active.epoch) state.user.value = null
+      settled.value = false
+      if (reconciled) throw new Error('The session changed during verification. Try again.')
+      state.inflight = null
+      if (runtime.prepareBrowserSession) {
+        if (!await executeWithAbort(controller.signal, remaining(endsAt), signal => runtime.prepareBrowserSession!(signal!))) {
+          await waitUntil(purgeLocalCache(), endsAt)
+          if (version !== state.sessionVersion) throw new Error('Verification superseded.')
+          settled.value = true
+          return { valid: false, expired: false }
+        }
+      }
+      return runVerification(true, endsAt)
+    }
+    const invalidate = async (): Promise<VerificationResult> => {
+      if (version !== state.sessionVersion || !sameCredentialOwner(owner, capture())) return reconcile()
+      if (configuredSessionMode() === 'cookie' || runtime.server) {
+        const authority = runtime.credentialCoordinator
+        const clear = async () => {
+          if (version !== state.sessionVersion || !sameCredentialOwner(owner, capture())) return false
+          const epoch = authority?.bumpEpoch()
+          state.user.value = null
+          const local = runtime.forgetBrowserSession ?? options.clearToken ?? runtimeOptions().clearToken
+          await Promise.all([purgeLocalCache(), !runtime.server && local?.()])
+          const active = capture()
+          return version === state.sessionVersion && (epoch === undefined || active.epoch === epoch) &&
+            (!active.sessionKey || active.sessionKey === owner.sessionKey) &&
+            (!active.accessToken || active.accessToken === owner.accessToken)
+        }
+        if (!await waitUntil(authority ? authority.runExclusive(clear) : clear(), endsAt)) {
+          if (version === state.sessionVersion) return reconcile()
+          await waitUntil(awaitCurrentTransition(), endsAt)
+          return { valid: !!state.user.value, expired: false }
+        }
+      } else {
+        const authority = runtime.credentialCoordinator
+        if (authority?.invalidate) {
+          if (!await waitUntil(authority.invalidate(owner), endsAt)) {
+            if (!sameCredentialOwner(owner, capture())) return reconcile()
+            await waitUntil(purgeLocalCache(), endsAt)
+          }
+        } else if (sameCredentialOwner(owner, capture())) {
+          await waitUntil(teardown(), endsAt)
+          return { valid: false, expired: true }
+        } else return reconcile()
+      }
+      if (version !== state.sessionVersion) {
+        await waitUntil(awaitCurrentTransition(), endsAt)
+        return { valid: !!state.user.value, expired: false }
+      }
+      state.user.value = null
+      verifiedOwner = capture()
+      settled.value = true
+      return { valid: false, expired: true }
+    }
     const promise = execution.then(async ({ data }) => {
       if (version !== state.sessionVersion) {
-        await awaitCurrentTransition()
+        await waitUntil(awaitCurrentTransition(), endsAt)
         return { valid: Boolean(state.user.value), expired: false }
       }
+      if (!sameCredentialOwner(owner, capture())) return reconcile()
       const currentUser = options.meSelector
         ? options.meSelector(data)
         : (data as any)?.me
-      if (!currentUser) {
-        await teardown()
-        return { valid: false, expired: true }
-      }
+      if (!currentUser) return invalidate()
+      verifiedOwner = owner
+      settled.value = true
       state.user.value = currentUser
       state.error.value = null
       return { valid: true, expired: false }
-    }).catch(async (error) => {
+    }, async (error) => {
       if (version !== state.sessionVersion) {
-        await awaitCurrentTransition()
+        await waitUntil(awaitCurrentTransition(), endsAt)
         return { valid: Boolean(state.user.value), expired: false }
       }
+      if (!sameCredentialOwner(owner, capture())) return reconcile()
+      if (isAuthError(error)) return invalidate()
       state.error.value = error
-      if (isAuthError(error)) {
-        await teardown()
-        return { valid: false, expired: true }
-      }
       // An ordinary GraphQL/network failure does not prove the session
       // invalid. Propagate it so consumer middleware cannot turn an unknown
       // verification result into a misleading login redirect.
@@ -525,6 +554,7 @@ export function createAuthRuntime(
       // Session replacement, teardown, or reset may have invalidated this
       // request while a newer verification is already running. Only the
       // verification that currently owns the bookkeeping may clear it.
+      if (verificationController === controller) verificationController = undefined
       if (state.inflightId !== verificationId) return
       state.loading.value = false
       state.inflight = null
@@ -535,25 +565,25 @@ export function createAuthRuntime(
     return promise
   }
 
-  const persistSession = async (session: AuthSession) => {
+  const persistSession = async (session: AuthSession, signal: AbortSignal) => {
     const runtime = resolveRuntime()
     if (runtime.server) return
     const refresh = runtimeOptions().refresh
     if (!session.token) {
       const customPersist = options.setToken || runtimeOptions().setToken
-      if (customPersist) await customPersist(session)
+      if (customPersist) await customPersist(session, { signal })
       return
     }
     if (refresh?.persistTokens) {
       await refresh.persistTokens({
         token: session.token,
         refreshToken: session.refreshToken,
-      })
+      }, { signal })
       return
     }
     const customPersist = options.setToken || runtimeOptions().setToken
     if (customPersist) {
-      await customPersist(session)
+      await customPersist(session, { signal })
       return
     }
     if (usesCustomTokenStore()) {
@@ -574,9 +604,81 @@ export function createAuthRuntime(
     }
   }
 
-  state.verifySession = async () => (await runVerification()).valid
+  let preparation: Promise<VerificationResult> | undefined
+  const verifyCurrent = (endsAt = deadline()): Promise<VerificationResult> => {
+    const runtime = resolveRuntime()
+    if (stalledWriter) return Promise.reject(new Error('Session writer recovery is pending.'))
+    if (!runtime.prepareBrowserSession) return runVerification(false, endsAt)
+    if (state.transitionPromise) return waitUntil(state.transitionPromise, endsAt).then(() => verifyCurrent(endsAt))
+    if (preparation) return preparation
+    const version = state.sessionVersion
+    state.loading.value = true
+    const controller = verificationController = new AbortController()
+    const previous = capture()
+    const work = executeWithAbort(controller.signal, remaining(endsAt),
+      signal => runtime.prepareBrowserSession!(signal!)).then(async present => {
+      if (version !== state.sessionVersion) {
+        await waitUntil(awaitCurrentTransition(), endsAt)
+        return { valid: Boolean(state.user.value), expired: false }
+      }
+      if ((verifiedOwner?.sessionKey ?? previous.sessionKey) !== capture().sessionKey || (!present && state.user.value)) {
+        state.user.value = null
+        await waitUntil(purgeLocalCache(), endsAt)
+        if (version !== state.sessionVersion || controller.signal.aborted) throw new Error('Verification superseded.')
+      }
+      if (!present) {
+        verifiedOwner = capture()
+        state.user.value = null
+        state.error.value = null
+        await waitUntil(purgeLocalCache(), endsAt)
+        if (version !== state.sessionVersion) throw new Error('Verification superseded.')
+        settled.value = true
+        return { valid: false, expired: false }
+      }
+      return runVerification(false, endsAt)
+    }).catch(error => {
+      if (version === state.sessionVersion) state.error.value = error
+      throw error
+    }).finally(() => {
+      if (preparation === work) preparation = undefined
+      if (verificationController === controller) verificationController = undefined
+      if (version === state.sessionVersion && !state.inflight) state.loading.value = false
+    })
+    preparation = work
+    return work
+  }
+  const observations = new WeakMap<Promise<VerificationResult>, Promise<VerificationResult>>()
+  const verifyObserved = () => {
+    const verification = verifyCurrent()
+    if (!options.onVerification) return verification
+    const existing = observations.get(verification)
+    if (existing) return existing
+    const started = performance.now()
+    const report = (outcome: AuthVerificationEvent['outcome'], httpStatus?: number) => {
+      try { options.onVerification?.({ outcome, durationMs: Math.round(performance.now() - started), httpStatus }) }
+      catch { /* Diagnostics cannot change session state. */ }
+    }
+    const work = verification.then(result => {
+      report(result.valid ? 'authenticated' : result.expired ? 'revoked' : 'anonymous')
+      return result
+    }, error => {
+      const cause = error?.networkError ?? error
+      const status = cause?.statusCode ?? cause?.status
+      const codes = error?.graphQLErrors?.map((item: any) => item.extensions?.code) ?? []
+      report(cause?.name === 'TimeoutError' ? 'timeout' : cause?.name === 'AbortError' ? 'cancelled'
+        : status === 429 ? 'rate-limited' : status === 403 || codes.includes('FORBIDDEN') ? 'forbidden'
+        : codes.includes('REFRESH_SUPERSEDED') ? 'refresh-conflict' : status >= 500 ? 'unavailable'
+        : error?.networkError || cause instanceof TypeError ? 'network-error' : 'application-error',
+        typeof status === 'number' ? status : undefined)
+      throw error
+    })
+    observations.set(verification, work)
+    return work
+  }
+  state.verifySession = async (wait = {}) =>
+    (await executeWithAbort(wait.signal, undefined, () => verifyObserved())).valid
   state.verify = async () => {
-    const result = await runVerification()
+    const result = await verifyObserved()
     if (!result.valid && result.expired && options.autoNavigate !== false) {
       const navigation = state.expiredNavigation ??= (async () => {
         const loginRoute = options.loginRoute || '/login'
@@ -592,52 +694,7 @@ export function createAuthRuntime(
     }
     return result.valid
   }
-  state.setSession = async (session) => {
-    const previousTransition = state.transitionPromise
-    state.sessionVersion += 1
-    const version = state.sessionVersion
-    try {
-      resolveRuntime().credentialCoordinator?.bumpEpoch()
-    } catch {
-      // Legacy runtime may not be installed yet.
-    }
-    state.hydratedVerificationPending = false
-    state.user.value = null
-    state.error.value = null
-    state.loading.value = false
-    state.inflight = null
-    state.inflightId = null
-    const promise = (async () => {
-      if (previousTransition) {
-        try {
-          await previousTransition
-        } catch {
-          // A failed earlier session transition must not abort a newer
-          // independent login; the earlier caller still receives its own error.
-        }
-      }
-      try {
-        await resolveRuntime().clearStore(clientId)
-      } catch {
-        // Establishing a session must still succeed when cache cleanup is best effort.
-      }
-      const coordinator = resolveRuntime().credentialCoordinator
-      if (coordinator) {
-        await coordinator.runExclusive(() => persistSession(session))
-      } else {
-        await persistSession(session)
-      }
-      if (version === state.sessionVersion && session.user !== undefined) {
-        state.user.value = session.user
-      }
-    })()
-    state.transitionPromise = promise
-    try {
-      await promise
-    } finally {
-      if (state.transitionPromise === promise) state.transitionPromise = null
-    }
-  }
+  state.setSession = (session, wait) => transition(session, wait?.signal)
   state.clearSession = async () => {
     await teardown()
   }
@@ -668,14 +725,16 @@ export function createAuthRuntime(
   }
   state.reset = () => {
     state.sessionVersion += 1
+    preparation = undefined
+    verificationController?.abort()
+    settled.value = false
+    verifiedOwner = undefined
     state.user.value = null
     state.error.value = null
     state.loading.value = false
     state.inflight = null
     state.inflightId = null
     state.expiredNavigation = null
-    state.hydratedVerificationPending = false
-    state.tearingDown = false
   }
   states.set(boundary, state)
   return state
@@ -692,7 +751,6 @@ export const restoreAuthState = (
   }
   internal.user.value = hydration.user ?? null
   internal.error.value = null
-  internal.hydratedVerificationPending = hydration.user != null
 }
 
 /**
