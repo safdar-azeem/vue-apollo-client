@@ -58,7 +58,8 @@ export const resolveJwtAccountIdentity = (
  * which must NOT wipe the Apollo store or drop the offline queue mid-flight
  * (Apollo invariant #42: "Store reset while query was in flight").
  *
- * - JWT with `sub` / `_id` / `sid`: use that claim (stable for the browser session).
+ * - JWT with a login claim (`lsid` or `sid`): use the login identity.
+ * - Account-only JWTs: fingerprint the full credential; account identity cannot prove session continuity.
  * - Opaque tokens / explicit session IDs: fingerprint the value so distinct
  *   opaque accounts never share one cache key.
  * - Empty / missing: signed out (`null`).
@@ -79,12 +80,9 @@ export const resolveApolloSessionCacheKey = (
         typeof atob === 'function'
           ? atob(padded)
           : Buffer.from(padded, 'base64').toString('utf8')
-      const payload = JSON.parse(json) as { sub?: unknown; _id?: unknown; sid?: unknown }
-      if (typeof payload.sub === 'string' && payload.sub.trim()) {
-        return `sub:${payload.sub.trim()}`
-      }
-      if (typeof payload._id === 'string' && payload._id.trim()) {
-        return `sub:${payload._id.trim()}`
+      const payload = JSON.parse(json) as { sub?: unknown; _id?: unknown; sid?: unknown; lsid?: unknown }
+      if (typeof payload.lsid === 'string' && payload.lsid.trim()) {
+        return `login:${payload.lsid}`
       }
       if (typeof payload.sid === 'string' && payload.sid.trim()) {
         return `sid:${payload.sid.trim()}`
@@ -97,7 +95,20 @@ export const resolveApolloSessionCacheKey = (
   return fingerprintOpaqueSession(trimmed)
 }
 
+export interface CredentialOwnership {
+  accessToken: string
+  refreshToken: string
+  sessionKey: string | null
+  epoch: number
+}
+
+export const sameCredentialOwner = (a: CredentialOwnership, b: CredentialOwnership) =>
+  a.epoch === b.epoch && a.accessToken === b.accessToken &&
+  a.refreshToken === b.refreshToken && a.sessionKey === b.sessionKey
+
 export interface CredentialMutationCoordinator {
+  capture?: () => CredentialOwnership
+  invalidate?: (owner: CredentialOwnership) => Promise<boolean>
   getEpoch: () => number
   bumpEpoch: () => number
   runExclusive: <T>(task: () => Promise<T> | T) => Promise<T>
@@ -134,4 +145,37 @@ export const isApolloStoreResetError = (error: unknown): boolean => {
     /[?&#]message[=:]42\b/.test(message) ||
     message.includes('"message":42')
   )
+}
+
+const decodeBase64Url = (value: string): string | null => {
+  try {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = `${normalized}${'='.repeat((4 - (normalized.length % 4)) % 4)}`
+    if (typeof atob === 'function') {
+      const binary = atob(padded)
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+      return new TextDecoder().decode(bytes)
+    }
+    return Buffer.from(padded, 'base64').toString('utf8')
+  } catch {
+    return null
+  }
+}
+
+export const decodeTokenClaims = (
+  token: string | null | undefined
+): Record<string, unknown> | null => {
+  if (!token) return null
+  const encodedPayload = token.split('.')[1]
+  if (!encodedPayload) return null
+  const decoded = decodeBase64Url(encodedPayload)
+  if (!decoded) return null
+  try {
+    const claims = JSON.parse(decoded)
+    return claims && typeof claims === 'object' && !Array.isArray(claims)
+      ? claims as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
 }
