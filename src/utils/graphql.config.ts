@@ -16,7 +16,6 @@ import {
   getCookieValueFromHeader,
   getToken as getCookieToken,
   getRefreshToken as getCookieRefreshToken,
-  restoreStashedToken,
   removeToken,
   setToken,
 } from '../composables/useCookies'
@@ -28,7 +27,8 @@ import type {
 import {
   createCredentialMutationCoordinator,
   resolveApolloSessionCacheKey,
-  resolveJwtAccountIdentity,
+  sameCredentialOwner,
+  type CredentialOwnership,
   type CredentialMutationCoordinator,
 } from '../ApolloSessionRuntime'
 
@@ -60,6 +60,7 @@ interface ConfigProps {
   setToken?: (session: { token?: string | null; refreshToken?: string | null }) => void | Promise<void>
   clearToken?: () => void | Promise<void>
   formatToken?: (token: string) => string
+  prepareOperation?: () => Promise<void> | undefined
   getSessionId?: () => string | null | undefined
   sessionMode?: 'token' | 'cookie'
   credentials?: RequestCredentials
@@ -80,21 +81,12 @@ const createRuntimeFetch = (
     if (!baseFetch) throw new Error('No fetch implementation is available for Apollo.')
     if (!timeoutMs && !runtime.signal) return baseFetch(input, init)
 
-    const controller = new AbortController()
     const signals = [runtime.signal, init.signal].filter(Boolean) as AbortSignal[]
-    const abort = () => controller.abort()
-    for (const signal of signals) {
-      if (signal.aborted) controller.abort()
-      else signal.addEventListener('abort', abort, { once: true })
-    }
-    const timeout = timeoutMs ? setTimeout(abort, timeoutMs) : undefined
-
-    try {
-      return await baseFetch(input, { ...init, signal: controller.signal })
-    } finally {
-      if (timeout) clearTimeout(timeout)
-      for (const signal of signals) signal.removeEventListener('abort', abort)
-    }
+    if (timeoutMs) signals.push(AbortSignal.timeout(timeoutMs))
+    // Fetch resolves at headers. The composed signal must still reach the
+    // native response stream throughout body consumption.
+    const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+    return baseFetch(input, { ...init, signal })
   }
 }
 
@@ -113,6 +105,7 @@ export const graphqlConfig = ({
   getToken,
   setToken: setConfiguredToken,
   clearToken,
+  prepareOperation,
   formatToken = (token) => token,
   getSessionId,
   sessionMode,
@@ -160,7 +153,6 @@ export const graphqlConfig = ({
     }
   }
 
-  if (!server && !usesCustomTokenStore) restoreStashedToken(tokenKey, tokenCookie)
 
   const refresh = refreshTokenContract
     ? {
@@ -231,7 +223,7 @@ export const graphqlConfig = ({
     ? refresh.getRefreshToken()
     : server
       ? getCookieValueFromHeader(readRequestHeader('cookie'), `${tokenKey}_refresh`)
-      : getCookieRefreshToken(tokenKey, tokenCookie)
+      : usesCustomTokenStore ? undefined : getCookieRefreshToken(tokenKey, tokenCookie)
   const readSessionSource = () => {
     if (getSessionId) return getSessionId()
     const token = readToken()
@@ -288,9 +280,8 @@ export const graphqlConfig = ({
 
   /**
    * Resolve a verifiable account identity for safe stale-token retry checks.
-   * Uses the consumer's `getSessionId()` when provided, otherwise JWT `sub` /
-   * `_id`. Returns `null` for opaque tokens without `getSessionId` so unrelated
-   * opaque tokens are never assumed to belong to the same account.
+   * Explicit session IDs and login claims establish continuity. An external
+   * replacement of account-only tokens cannot authorize private result replay.
    */
   const resolveAccountIdentity = (
     token: string | null | undefined,
@@ -300,7 +291,7 @@ export const graphqlConfig = ({
       const source = explicitSessionId !== undefined ? explicitSessionId : getSessionId()
       return resolveApolloSessionCacheKey(source ?? null)
     }
-    return resolveJwtAccountIdentity(token)
+    return resolveApolloSessionCacheKey(token)
   }
 
   const isSameAccount = (
@@ -312,27 +303,18 @@ export const graphqlConfig = ({
   // runtime's shared credential barrier so explicit logins / logouts never
   // overlap with stale writes or deletions, and cleanup errors never become
   // unhandled rejections or falsely report logout.
-  const clearSessionIfCurrent = (expected: {
-    accessToken: string
-    refreshToken: string
-    sessionKey: string | null
-    epoch: number
-  }): Promise<boolean> =>
-    credentialCoordinator.runExclusive(async (): Promise<boolean> => {
-      if (credentialCoordinator.getEpoch() !== expected.epoch) {
-        return false
-      }
-      const currentAccessToken = readToken() || ''
-      const currentRefreshToken = readRefreshToken() || ''
-      const currentSessionKey = resolveApolloSessionCacheKey(readSessionSource() ?? null)
+  const capture = (): CredentialOwnership => ({
+    accessToken: readToken() || '',
+    refreshToken: readRefreshToken() || '',
+    sessionKey: resolveApolloSessionCacheKey(readSessionSource() ?? null),
+    epoch: credentialCoordinator.getEpoch(),
+  })
 
-      if (
-        currentAccessToken !== expected.accessToken ||
-        currentRefreshToken !== expected.refreshToken ||
-        currentSessionKey !== expected.sessionKey
-      ) {
-        return false
-      }
+  const clearSessionIfCurrent = (expected: CredentialOwnership): Promise<boolean> =>
+    credentialCoordinator.runExclusive(async (): Promise<boolean> => {
+      const current = capture()
+      if (!sameCredentialOwner(expected, current)) return false
+      const { accessToken: currentAccessToken, refreshToken: currentRefreshToken } = current
       if (!currentAccessToken && !currentRefreshToken) {
         return false
       }
@@ -363,14 +345,26 @@ export const graphqlConfig = ({
       return true
     })
 
+  credentialCoordinator.capture = capture
+  credentialCoordinator.invalidate = clearSessionIfCurrent
+
   const authLink = setContextLink(async (operation, previousContext) => {
     const requestEpoch = credentialCoordinator.getEpoch()
+    const preparation = prepareOperation?.()
+    if (preparation) {
+      await preparation
+      if (requestEpoch !== credentialCoordinator.getEpoch()) throw new Error('Session changed before dispatch.')
+    }
     const initialToken = readToken() || ''
     const initialAccountIdentity = resolveAccountIdentity(initialToken)
     const initialSessionKey = server
       ? null
       : resolveApolloSessionCacheKey(readSessionSource() ?? null)
 
+    if (previousContext.vueApolloOfflineOwner !== undefined &&
+        previousContext.vueApolloOfflineOwner !== (initialSessionKey ?? 'anonymous')) {
+      throw new Error('Offline change belongs to another login.')
+    }
     let didResetCaches = false
     if (!server) {
       // Compare stable session keys — never raw rotating access/refresh tokens.
@@ -563,6 +557,11 @@ export const graphqlConfig = ({
           currentSessionKey === attemptedSessionKey
 
         if (!sessionStillCurrent) {
+          if (!refresh && sessionMode === 'cookie' && attemptedSessionKey && currentSessionKey === attemptedSessionKey &&
+              credentialCoordinator.getEpoch() === startEpoch && currentAccessToken === refreshedTokens!.token) {
+            recordInRuntimeRotation(attemptedAccessToken, currentAccessToken, startEpoch)
+            return { token: currentAccessToken, source: 'refreshed' }
+          }
           if (
             credentialCoordinator.getEpoch() === startEpoch &&
             currentAccessToken &&
@@ -648,6 +647,27 @@ export const graphqlConfig = ({
       }
 
       const isMutation = isMutationOperation(operation)
+      // The server must explicitly attest to pre-execution rejection. A 401,
+      // a field error, or missing data alone says nothing about prior writes.
+      if (isMutation && operationContext.vueApolloIdempotent !== true) {
+        const rejectedBeforeExecution = !operationContext.vueApolloExecutionObserved && response?.data == null && !!graphQLErrors?.length &&
+          graphQLErrors.every(error => !error.path && error.extensions?.code === 'UNAUTHENTICATED' &&
+            error.extensions?.executionStarted === false)
+        if (!rejectedBeforeExecution) {
+          if (currentToken === requestToken && !alreadyRetried && (refresh ? readRefreshToken() : refreshToken && currentToken)) {
+            return fromPromise(runRefresh(clientId).catch(() => undefined)).flatMap(() => new Observable(observer => {
+              if (networkError || credentialCoordinator.getEpoch() !== requestEpoch ||
+                  resolveApolloSessionCacheKey(readSessionSource() ?? null) !== requestSessionKey) {
+                observer.error(networkError ?? new Error('Session changed before mutation recovery completed.'))
+              } else {
+                observer.next(response ?? { errors: graphQLErrors })
+                observer.complete()
+              }
+            }))
+          }
+          return
+        }
+      }
 
       // If credentials changed while this operation was in flight (e.g. rotated
       // or re-logged in by another tab/app with no explicit transition here):
@@ -667,8 +687,7 @@ export const graphqlConfig = ({
           !alreadyRetried &&
           credentialCoordinator.getEpoch() === requestEpoch &&
           currentToken &&
-          isSameAccount(requestAccountIdentity, currentAccountIdentity) &&
-          (!isMutation || sameRuntimeRotation)
+          (sameRuntimeRotation || (!isMutation && isSameAccount(requestAccountIdentity, currentAccountIdentity)))
         ) {
           operation.setContext(({ headers = {} }) => ({
             vueApolloRetriedAfterRefresh: true,
@@ -734,7 +753,8 @@ export const graphqlConfig = ({
         if (
           requestAccountIdentity &&
           nextAccountIdentity &&
-          requestAccountIdentity !== nextAccountIdentity
+          requestAccountIdentity !== nextAccountIdentity &&
+          !hasInRuntimeContinuity(requestToken, nextToken, requestEpoch)
         ) {
           throw new Error('Account changed while retrying authenticated operation.')
         }
@@ -752,6 +772,22 @@ export const graphqlConfig = ({
       })
     }
   )
+
+  // Apollo writes a successful result into its normalized cache after the
+  // links return. Reject results belonging to a departed login before that write.
+  const responseOwner = new ApolloLink((operation, forward) => {
+    const owner = operation.getContext()
+    return forward(operation).map(result => {
+      if (isMutationOperation(operation) && (result.data != null || 'incremental' in result || 'items' in result)) {
+        operation.setContext({ vueApolloExecutionObserved: true })
+      }
+      if (!server && (!result.errors?.length || result.data != null || 'incremental' in result || 'items' in result) && (
+        owner.vueApolloRequestEpoch !== credentialCoordinator.getEpoch() ||
+        owner.vueApolloRequestSessionKey !== resolveApolloSessionCacheKey(readSessionSource() ?? null)
+      )) throw new Error('Session changed before the response arrived.')
+      return result
+    })
+  })
 
   const runtimeFetch = createRuntimeFetch(runtime)
   for (const [clientId, endpoint] of Object.entries(endPoints)) {
@@ -783,7 +819,7 @@ export const graphqlConfig = ({
     clients[clientId] = new ApolloClient({
       ...clientConfig,
       cache,
-      link: from([createErrorLink(clientId), authLink, httpLink]),
+      link: from([createErrorLink(clientId), authLink, responseOwner, httpLink]),
       ssrMode: server,
       // Apollo temporarily honors restored SSR data even when a generated
       // composable requests a force-fetch policy during initial hydration.
