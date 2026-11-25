@@ -232,13 +232,14 @@ describe('installed auth runtime', () => {
     const browser = createApollo(authConfig(() => useNativeQuery(
       ME_QUERY,
       undefined,
-      { fetchPolicy: 'network-only' },
+      { fetchPolicy: 'network-only', context: { headers: { 'x-fixture-scope': 'private' } } },
     )) as any, {
       server: false,
       registerGlobal: false,
       initialState: serverContributions.get('apollo')?.() as any,
       initialAuthState: authHydration,
-      fetch: async () => {
+      fetch: async (_url, init) => {
+        expect(new Headers(init?.headers).get('x-fixture-scope')).toBe('private')
         browserFetches += 1
         return new Response(JSON.stringify({ data: { me: null } }), {
           status: 200,
@@ -256,9 +257,10 @@ describe('installed auth runtime', () => {
     const browserAuth = browserApp.runWithContext(() => useAuth())
 
     expect(browserAuth.user.value?.id).toBe('hydrated-user')
-    await expect(browserAuth.verifySession()).resolves.toBe(true)
-    expect(browserAuth.can('reports:view')).toBe(true)
-    expect(browserFetches).toBe(0)
+    document.cookie = 'auth_token=browser-session; path=/'
+    await expect(browserAuth.verifySession()).resolves.toBe(false)
+    expect(browserAuth.can('reports:view')).toBe(false)
+    expect(browserFetches).toBe(1)
     server.stop()
     browser.stop()
   })
@@ -322,10 +324,7 @@ describe('installed auth runtime', () => {
     const useMeQuery = vi.fn(() => ({
       result: { value: undefined },
       loading: { value: true },
-      onResult: (callback: any) => {
-        resolveQuery = (value) => callback({ data: value, loading: false })
-        return { off: () => undefined }
-      },
+      refetch: () => new Promise(resolve => { resolveQuery = data => resolve({ data }) }),
       onError: () => ({ off: () => undefined }),
       stop: () => undefined,
     }))
