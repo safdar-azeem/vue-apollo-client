@@ -316,7 +316,17 @@ Important:
 
 - Variables must be JSON-serializable.
 - File uploads cannot be queued offline.
-- Use offline mode only for mutations that are safe to replay.
+- Saving offline requires Web Locks. Reconnect before saving if the browser lacks this API.
+- Each mutation is stored under its own ID. Replay takes an origin-wide lock for the queue and records dispatch before sending the request. A failed response or closed tab can leave the server outcome uncertain. Further replay for that login stops at the uncertain entry.
+- Use `runtime.offline.uncertain(clientId)` to inspect their IDs, creation times, mutation documents and variables. After checking the server's record, pass `'committed'` or `'not-committed'` to `runtime.offline.resolveUncertain(clientId, id, outcome)`, then call `runtime.offline.sync(clientId)`. If the server outcome cannot be determined, leave the item pending.
+- Upgrading from the older array format requires closing older tabs before calling `await runtime.offline.adoptLegacyQueue(clientId)`. The new release stores its entries in a separate namespace. Imported entries require outcome reconciliation because an older tab may already have sent them.
+- Storage is scoped to the app, endpoint, client and login. An account replacement cannot acknowledge another login's queue.
+
+## Session transitions and mutation retry
+
+`auth.setSession(session, { signal })` supports cancellation. The verification timeout also bounds the caller's wait for session establishment and teardown. Custom token writers receive the signal during establishment. Their promises must settle only after their external writes have finished or have been cancelled. A timed-out writer keeps exclusive ownership until its promise settles. A subsequent deliberate sign-in can then proceed.
+
+After an authentication failure, queries can refresh and retry under the existing ownership checks. To permit a mutation retry, the server can reject it before execution with no data and pathless `UNAUTHENTICATED` errors carrying `extensions.executionStarted: false`. A caller may also set `context.vueApolloIdempotent: true` when the server guarantees that replaying the entire operation with the same inputs has the same effect. Multi-field mutations with partial results use that same contract.
 
 # Authentication
 
@@ -804,3 +814,9 @@ For new applications, prefer `defineApollo` plus generated composables.
 ## License
 
 MIT
+
+### Authoritative browser sessions
+
+Use `auth.verifySession({ signal })` before granting access to a protected route. It resolves true or false for confirmed outcomes and rejects on transport failure. A caller's abort signal releases that caller. Concurrent callers share the runtime's verification. A custom Me adapter must expose its GraphQL document or an authoritative refetch promise. Optional `auth.onVerification` receives the outcome, elapsed milliseconds and available HTTP status. Set `auth.verificationTimeoutMs` to bound a verification operation. Hydrated user data is for initial display.
+
+An application may configure `browserSessionEndpoint` on trusted browser origins to use a central HttpOnly session. The endpoint implements POST `access`, `establish` and `logout`. The Auth origin serializes establishment using Web Locks. An establishment must return its authoritative `sessionId`; the following access read must return the same ID and an access token. Logout must compare the supplied session ID against the authenticated ticket. A refresh-only migration may supply an independent `recoveryKey` for bounded idempotent exchange. Access tokens stay in runtime memory. An optional `browserSessionChangeKey` names a nonsecret shared cookie used only to invalidate stale operations. Keep SSR runtimes request-scoped. See the Builto deployment guide for its broker and allowed origins.
