@@ -1,3 +1,4 @@
+import { createBrowserSession } from './ApolloBrowserSession'
 import { hasInjectionContext, inject, type App, type InjectionKey } from 'vue'
 import { ApolloClients, provideApolloClients } from '@vue/apollo-composable'
 import type {
@@ -34,6 +35,9 @@ import {
 } from './composables/useAuth'
 
 export interface VueApolloRuntime {
+  purgeSessionCaches?: () => Promise<void>
+  forgetBrowserSession?: () => void
+  captureBrowserLogout?: () => () => Promise<void>
   install: (app: App) => void
   server: boolean
   clients: VueApolloClients
@@ -66,6 +70,7 @@ export interface VueApolloRuntime {
   clearStore: (clientId?: string) => Promise<void>
   runWithContext: <T>(callback: () => T) => T
   /** Internal credential-mutation barrier shared by auth and refresh links. */
+  prepareBrowserSession?: (signal: AbortSignal) => Promise<boolean>
   readonly credentialCoordinator?: CredentialMutationCoordinator
   stop: () => void
 }
@@ -107,8 +112,26 @@ export const createApollo = (
   options: VueApolloClientOptions,
   runtime: VueApolloRuntimeOptions = {}
 ): VueApolloRuntime => {
-  const normalizedOptions = normalizeApolloOptions(options)
   const server = runtime.server ?? typeof window === 'undefined'
+  const endpoint = !server && options.browserSessionEndpoint
+  const replacementParam = '__vue_apollo_reentry'
+  if (endpoint) {
+    const entry = new URL(window.location.href)
+    if (entry.searchParams.has(replacementParam)) {
+      entry.searchParams.delete(replacementParam)
+      history.replaceState(history.state, '', entry.href)
+    }
+  }
+  const managed = endpoint ? createBrowserSession(options, endpoint, () => {
+    credentialCoordinator.bumpEpoch()
+    installedAuth?.reset()
+    void apolloRuntime.purgeSessionCaches?.()
+    // Remount every editor and run the destination's normal authorization guard.
+    const entry = new URL(window.location.href)
+    entry.searchParams.set(replacementParam, crypto.randomUUID())
+    window.location.replace(entry.href)
+  }) : undefined
+  const normalizedOptions = normalizeApolloOptions(managed?.options ?? options)
   const registerGlobal = runtime.registerGlobal ?? !server
   const hydrationKey = runtime.hydrationKey ?? 'apollo'
   // Single derived hydration state: true once the cache was restored, whether
@@ -150,6 +173,7 @@ export const createApollo = (
     setToken: normalizedOptions.setToken || normalizedOptions.auth?.setToken,
     clearToken: normalizedOptions.clearToken || normalizedOptions.auth?.clearToken,
     formatToken: normalizedOptions.formatToken,
+    prepareOperation: managed?.prepareOperation,
     getSessionId: normalizedOptions.getSessionId,
     sessionMode: normalizedOptions.sessionMode || normalizedOptions.auth?.sessionMode,
     credentials: normalizedOptions.credentials,
@@ -162,8 +186,14 @@ export const createApollo = (
     setClients(clients)
   }
 
-  const offline = createApolloOfflineRuntime(normalizedOptions, clients)
+  const offline = createApolloOfflineRuntime(
+    normalizedOptions,
+    clients,
+    () => installedAuth?.status.value === 'authenticated' ? installedAuth.user.value?.id : undefined,
+    managed ? () => managed.prepareOperation(true) : undefined
+  )
   let installedAuth: AuthState | undefined
+  let removeSessionListeners = () => {}
   const apolloRuntime: VueApolloRuntime = {
     install(app: App) {
       if (ownerApp && ownerApp !== app) {
@@ -213,8 +243,15 @@ export const createApollo = (
     },
     runWithContext: (callback) =>
       ownerApp ? ownerApp.runWithContext(callback) : callback(),
+    prepareBrowserSession: managed?.read,
+    purgeSessionCaches: async () => { await Promise.all(Object.values(clients).map(client => client.cache.reset())) },
+    forgetBrowserSession: managed?.forget,
+    captureBrowserLogout: managed?.captureLogout,
     credentialCoordinator,
     stop: () => {
+      removeSessionListeners()
+      managed?.forget()
+      installedAuth?.reset()
       offline.stop()
       for (const client of Object.values(clients)) client.stop()
       if (activeBrowserRuntime === apolloRuntime) activeBrowserRuntime = null
@@ -233,12 +270,34 @@ export const createApollo = (
       setToken: configuredAuth.setToken || normalizedOptions.setToken,
       clearToken: configuredAuth.clearToken || normalizedOptions.clearToken,
       initialUser: runtime.initialAuthState?.user ?? null,
-      initialAuthHydrated: Boolean(runtime.initialAuthState?.user),
       // Navigation policy belongs to the consumer. The compatibility APIs can
       // still navigate when an explicit callback/router is supplied.
       autoNavigate: false,
     })
     apolloRuntime.auth = installedAuth
+    if (!server && typeof window !== 'undefined') {
+      let last = credentialCoordinator.capture?.()
+      const resume = (event: Event) => {
+        const current = credentialCoordinator.capture?.()
+        const changed = current?.accessToken !== last?.accessToken || current?.refreshToken !== last?.refreshToken
+        last = current
+        const restored = (event as PageTransitionEvent).persisted
+        if (changed || restored || (managed && event.type === 'focus' && installedAuth!.status.value !== 'unknown')) {
+          void installedAuth!.verifySession().catch(() => undefined)
+        }
+      }
+      const reconnect = () => {
+        void installedAuth!.verifySession().then(async valid => { if (valid) await offline.sync() }).catch(() => undefined)
+      }
+      if (managed && offline.enabled) window.addEventListener('online', reconnect)
+      window.addEventListener('focus', resume)
+      window.addEventListener('pageshow', resume)
+      removeSessionListeners = () => {
+        window.removeEventListener('online', reconnect)
+        window.removeEventListener('focus', resume)
+        window.removeEventListener('pageshow', resume)
+      }
+    }
   }
   return apolloRuntime
 }
