@@ -38,15 +38,18 @@ export const useMutation = <
       typeof navigator !== 'undefined' &&
       navigator.onLine === false
     ) {
-      runtime.offline.enqueue(clientId, document, variables, {
+      await runtime.offline.enqueue(clientId, document, variables, {
         ...options,
         ...overrideOptions,
       })
       return { data: null } as any
     }
 
+    if (runtime.offline.enabled && runtime.offline.supports(document)) {
+      await runtime.offline.beforeOnlineMutation(clientId)
+    }
     const result = await originalMutate(variables, overrideOptions)
-    if (runtime.offline.enabled) void runtime.offline.sync(clientId)
+    if (runtime.offline.enabled) void runtime.offline.sync(clientId).catch(() => { /* Pending offline work remains durable. */ })
     return result
   }) as typeof mutation.mutate
 
