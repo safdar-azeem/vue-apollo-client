@@ -18,24 +18,10 @@ describe('resolveApolloSessionCacheKey', () => {
     expect(resolveApolloSessionCacheKey('   ')).toBeNull()
   })
 
-  it('uses JWT sub/_id/sid so token rotation stays in the same session', () => {
-    expect(resolveApolloSessionCacheKey(jwt({ sub: 'user-1', jti: 'a' }))).toBe(
-      'sub:user-1'
-    )
-    expect(resolveApolloSessionCacheKey(jwt({ sub: 'user-1', jti: 'b' }))).toBe(
-      'sub:user-1'
-    )
-    // Builto access tokens carry `_id` and a rotating refresh-session `sid`.
-    expect(resolveApolloSessionCacheKey(jwt({ _id: 'user-1', sid: 'jti-1' }))).toBe(
-      'sub:user-1'
-    )
-    expect(resolveApolloSessionCacheKey(jwt({ _id: 'user-1', sid: 'jti-2' }))).toBe(
-      'sub:user-1'
-    )
-    expect(resolveApolloSessionCacheKey(jwt({ _id: 'user-2', sid: 'jti-3' }))).toBe(
-      'sub:user-2'
-    )
-    expect(resolveApolloSessionCacheKey(jwt({ sid: 'sess-9' }))).toBe('sid:sess-9')
+  it('isolates same-account logins unless a stable login claim proves continuity', () => {
+    expect(resolveApolloSessionCacheKey(jwt({ sub: 'u', jti: 'a' }))).not.toBe(resolveApolloSessionCacheKey(jwt({ sub: 'u', jti: 'b' })))
+    expect(resolveApolloSessionCacheKey(jwt({ _id: 'u', sid: 'a' }))).not.toBe(resolveApolloSessionCacheKey(jwt({ _id: 'u', sid: 'b' })))
+    expect(resolveApolloSessionCacheKey(jwt({ lsid: 'login', jti: 'a' }))).toBe(resolveApolloSessionCacheKey(jwt({ lsid: 'login', jti: 'b' })))
   })
 
   it('isolates distinct opaque tokens while keeping identical opaque session IDs stable', () => {
