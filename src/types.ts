@@ -50,8 +50,19 @@ export interface AuthSession {
   user?: any | null
 }
 
+export interface AuthVerificationEvent {
+  outcome: 'authenticated' | 'anonymous' | 'revoked' | 'cancelled' | 'timeout' | 'rate-limited' |
+    'forbidden' | 'unavailable' | 'refresh-conflict' | 'network-error' | 'application-error'
+  durationMs: number
+  httpStatus?: number
+}
+
 /** Generic authentication configuration installed through `defineApollo`. */
 export interface VueApolloAuthOptions {
+  /** Deadline for authoritative verification, including reading the response body. */
+  verificationTimeoutMs?: number
+  /** Optional redacted verification diagnostics, once per shared check. */
+  onVerification?: (event: AuthVerificationEvent) => void
   /** Generated `useMeQuery`-style composable used for session verification. */
   useMeQuery?: (options?: any) => any
   /** @deprecated Lower-level document form retained for compatibility. */
@@ -70,7 +81,7 @@ export interface VueApolloAuthOptions {
   /** Browser or request-aware access-token lookup for custom stores. */
   getToken?: () => string | null | undefined
   /** Custom access/refresh-token persistence for custom stores. */
-  setToken?: (session: AuthSession) => void | Promise<void>
+  setToken?: (session: AuthSession, options?: { signal?: AbortSignal }) => void | Promise<void>
   /** Custom access/refresh-token removal for custom stores. */
   clearToken?: () => void | Promise<void>
   /** Optional explicit navigation retained for compatibility integrations. */
@@ -114,7 +125,7 @@ export interface VueApolloRefreshContract<
   createVariables: (refreshToken: string) => TVariables
   selectTokens: (data: TData) => VueApolloRefreshTokens | null | undefined
   /** Optional for the normal cookie-token store; persists with `tokenKey`. */
-  persistTokens?: (tokens: VueApolloRefreshTokens) => void | Promise<void>
+  persistTokens?: (tokens: VueApolloRefreshTokens, options?: { signal?: AbortSignal }) => void | Promise<void>
   /** Optional for the normal cookie-token store; removes both token cookies. */
   clearTokens?: () => void | Promise<void>
 }
@@ -137,6 +148,10 @@ export interface TokenCookieOptions {
 }
 
 export interface VueApolloClientOptions {
+  /** Trusted browser session service implementing access, establish, and logout. */
+  browserSessionEndpoint?: string
+  /** Optional public cookie containing only a session-change notification. */
+  browserSessionChangeKey?: string
   /** Stable Vue application identity used to isolate persisted runtime state. */
   applicationId?: string
   /** Stable authentication boundary, for example `portal` or `billing`. */
@@ -163,6 +178,8 @@ export interface VueApolloClientOptions {
   apolloUploadConfig?: Partial<ApolloUploadConfig>
   refetchOnUpdate?: boolean
   refetchTimeout?: number
+  offlineMutationNames?: readonly string[]
+  legacyOfflineEndpoints?: readonly string[]
   allowOffline?: boolean
   /** Identifies the current session without persisting access tokens. */
   getSessionId?: () => string | null | undefined
@@ -174,7 +191,7 @@ export interface VueApolloClientOptions {
   /** Override cookie token lookup (for example, a storefront localStorage session). */
   getToken?: () => string | null | undefined
   /** Override access/refresh-token persistence for a custom store. */
-  setToken?: (session: AuthSession) => void | Promise<void>
+  setToken?: (session: AuthSession, options?: { signal?: AbortSignal }) => void | Promise<void>
   /** Override token removal when authentication becomes invalid. */
   clearToken?: () => void | Promise<void>
   /** Format the Authorization header. The legacy behavior returns the token unchanged. */
