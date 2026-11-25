@@ -55,7 +55,11 @@ const resolveClient = (
   return client
 }
 
-const executeWithAbort = async <T>(
+export function verificationDeadline(value?: number) {
+  return Number.isFinite(value) && value! > 0 ? Math.min(value!, 2147483647) : 15000
+}
+
+export const executeWithAbort = async <T>(
   signal: AbortSignal | undefined,
   timeoutMs: number | undefined,
   execute: (signal: AbortSignal | undefined) => Promise<T>
@@ -70,12 +74,19 @@ const executeWithAbort = async <T>(
   if (signal?.aborted) controller.abort()
   else signal?.addEventListener('abort', abort, { once: true })
   const timer = Number.isFinite(timeout) && timeout > 0
-    ? setTimeout(abort, timeout)
+    ? setTimeout(() => controller.abort(new DOMException('Operation timed out.', 'TimeoutError')), timeout)
     : undefined
 
+  let onAbort!: () => void
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => reject(controller.signal.reason)
+    controller.signal.addEventListener('abort', onAbort, { once: true })
+  })
   try {
-    return await execute(controller.signal)
+    if (controller.signal.aborted) throw new DOMException('Operation was cancelled.', 'AbortError')
+    return await Promise.race([execute(controller.signal), cancelled])
   } finally {
+    controller.signal.removeEventListener('abort', onAbort)
     if (timer) clearTimeout(timer)
     signal?.removeEventListener('abort', abort)
   }
