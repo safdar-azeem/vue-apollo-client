@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { webcrypto } from 'node:crypto'
 import { gql } from '@apollo/client/core/index.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApolloOfflineRuntime } from './ApolloOfflineRuntime'
@@ -352,39 +353,24 @@ describe('application-scoped auth and offline state', () => {
 
   it('serializes clear → set → clear in invocation order', async () => {
     let token: string | null = 'old-token'
-    let firstClearCompleted = false
     let resolveFirstClearStarted!: () => void
-    let resolveSetStarted!: () => void
     let releaseFirstClear!: () => void
-    let releaseSet!: () => void
     let clearCalls = 0
     const firstClearStarted = new Promise<void>((resolve) => {
       resolveFirstClearStarted = resolve
     })
-    const setStarted = new Promise<void>((resolve) => {
-      resolveSetStarted = resolve
-    })
     const firstClear = new Promise<void>((resolve) => {
       releaseFirstClear = resolve
-    })
-    const setCompletion = new Promise<void>((resolve) => {
-      releaseSet = resolve
     })
     const clearToken = vi.fn(async () => {
       clearCalls += 1
       if (clearCalls === 1) {
         resolveFirstClearStarted()
         await firstClear
-        firstClearCompleted = true
       }
       token = null
     })
-    const setToken = vi.fn(async (session: any) => {
-      expect(firstClearCompleted).toBe(true)
-      token = session.token
-      resolveSetStarted()
-      await setCompletion
-    })
+    const setToken = vi.fn()
     const auth = createAuthRuntime({
       clearStore: vi.fn(async () => undefined),
       executeQuery: vi.fn(async () => ({ data: { me: null } })),
@@ -397,22 +383,12 @@ describe('application-scoped auth and offline state', () => {
 
     const clearA = auth.clearSession()
     await firstClearStarted
-    const setB = auth.setSession({
-      token: 'new-token',
-      user: { id: 'replacement-user' },
-    })
+    const setB = auth.setSession({ token: 'new-token', user: { id: 'replacement-user' } })
     const clearC = auth.clearSession()
-    let clearCResolved = false
-    void clearC.then(() => { clearCResolved = true })
-
     releaseFirstClear()
-    await setStarted
-    expect(firstClearCompleted).toBe(true)
-    expect(clearCResolved).toBe(false)
-    expect(token).toBe('new-token')
-
-    releaseSet()
-    await Promise.all([clearA, setB, clearC])
+    await expect(setB).rejects.toThrow(/superseded/i)
+    await Promise.all([clearA, clearC])
+    expect(setToken).not.toHaveBeenCalled()
     expect(clearToken).toHaveBeenCalledTimes(2)
     expect(token).toBeNull()
     expect(auth.user.value).toBeNull()
@@ -458,7 +434,8 @@ describe('application-scoped auth and offline state', () => {
 
     expect(auth.user.value).toBeNull()
     releaseFirstSet()
-    await Promise.all([setA, clearB, setC])
+    await expect(setA).rejects.toThrow(/superseded/i)
+    await Promise.all([clearB, setC])
     expect(token).toBe('last-token')
     expect(auth.user.value).toEqual({ id: 'last-user' })
     expect(auth.isAuthenticated.value).toBe(true)
@@ -488,8 +465,9 @@ describe('application-scoped auth and offline state', () => {
       getSessionId: () => jwtFor('right-user'),
     }, { default: rightClient } as any)
 
-    left.enqueue('default', SAVE_MUTATION, { value: 'left' })
-    right.enqueue('default', SAVE_MUTATION, { value: 'right' })
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (_: string, callback: () => unknown) => callback() } })
+    await left.enqueue('default', SAVE_MUTATION, { value: 'left' })
+    await right.enqueue('default', SAVE_MUTATION, { value: 'right' })
     await right.sync()
     expect(rightClient.mutate).toHaveBeenCalledTimes(1)
     expect(leftClient.mutate).not.toHaveBeenCalled()
@@ -498,8 +476,213 @@ describe('application-scoped auth and offline state', () => {
     leftSession = jwtFor('replacement-user')
     await left.sync()
     expect(leftClient.mutate).not.toHaveBeenCalled()
-    expect(localStorage.length).toBe(0)
+    expect(localStorage.length).toBe(1) // Only its original login may acknowledge the item.
     left.stop()
     right.stop()
   })
+})
+
+it('retains an unconfirmed write through reload until the owning app reconciles it', async () => {
+  const storage = createTestStorage()
+  vi.stubGlobal('localStorage', storage)
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (_: string, callback: () => unknown) => callback() } })
+  const mutate = vi.fn().mockResolvedValueOnce({ data: null }).mockResolvedValue({ data: { save: true } })
+  const make = () => createApolloOfflineRuntime({ allowOffline: true, getSessionId: () => 'login' }, { default: { mutate } } as any)
+  const first = make(), next = make()
+  try {
+    await first.enqueue('default', SAVE_MUTATION, { value: 'draft' })
+    await expect(first.sync()).rejects.toThrow(/not confirmed/)
+    first.stop()
+    await expect(next.sync()).rejects.toThrow(/confirmation/)
+    const [entry] = next.uncertain('default')
+    expect(entry?.variables).toEqual({ value: 'draft' })
+    expect(mutate).toHaveBeenCalledTimes(1)
+    await next.resolveUncertain('default', entry!.id, 'not-committed')
+    await next.sync()
+    expect(mutate).toHaveBeenCalledTimes(2)
+    expect(storage.length).toBe(0)
+  } finally { first.stop(); next.stop(); vi.unstubAllGlobals() }
+})
+
+it('isolates new entries from old pruning and preserves legacy work until explicit adoption', async () => {
+  const storage = createTestStorage()
+  vi.stubGlobal('localStorage', storage)
+  vi.stubGlobal('crypto', webcrypto)
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_: string, run: () => unknown) => run() } })
+  const mutate = vi.fn(async () => ({ data: { save: true } }))
+  const runtime = createApolloOfflineRuntime({ allowOffline: true, getSessionId: () => 'original' }, { default: { mutate } } as any)
+  try {
+    await runtime.enqueue('default', SAVE_MUTATION, { value: 'new' })
+    const current = storage.key(0)!
+    const oldKey = current.split(':item:')[0]!.replace(':v2:', ':v1:')
+    const old = { ...JSON.parse(storage.getItem(current)!), sequence: undefined, variables: { value: 'first legacy' }, createdAt: 1 }
+    storage.setItem(oldKey, JSON.stringify([old, { ...old, variables: {value: 'second legacy'} }]))
+    const oldPrefix = oldKey.substring(0, oldKey.lastIndexOf(':') + 1)
+    for (let i = storage.length - 1; i >= 0; i--) {
+      const key = storage.key(i)!
+      if (key.startsWith(oldPrefix) && key !== oldKey) storage.removeItem(key)
+    }
+    await expect(runtime.sync()).rejects.toThrow(/older app tabs/)
+    expect(storage.getItem(current)).toBeTruthy()
+    expect(storage.getItem(oldKey)).toBeTruthy()
+    await runtime.adoptLegacyQueue('default')
+    await runtime.adoptLegacyQueue('default')
+    const pending = runtime.uncertain('default')
+    expect(pending.map(item => item.variables?.value)).toEqual(['first legacy', 'second legacy'])
+    expect(mutate).not.toHaveBeenCalled()
+    expect(runtime.nextUncertain('default')?.id).toBe(pending[0]!.id)
+    await expect(runtime.resolveUncertain('default', pending[1]!.id, 'committed')).rejects.toThrow(/earliest/)
+    await runtime.sync('default', { untilUncertain: true })
+    expect(mutate).not.toHaveBeenCalled()
+    for (const item of pending) await runtime.resolveUncertain('default', item.id, 'committed')
+    await runtime.sync()
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(storage.length).toBe(0)
+  } finally { runtime.stop(); vi.unstubAllGlobals() }
+})
+
+it('uses chronological queue order even when storage enumerates the later edit first', async () => {
+  const storage = createTestStorage()
+  vi.stubGlobal('localStorage', storage)
+  vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('navigator', Object.create(navigator, {
+    locks: { value: { request: async (_name: string, work: () => Promise<unknown>) => work() } },
+  }))
+  const writes: unknown[] = []
+  const mutate = vi.fn(async ({ variables }) => {
+    writes.push(variables.value)
+    return { data: { save: true } }
+  })
+  const runtime = createApolloOfflineRuntime({ allowOffline: true, getSessionId: () => 'owner' }, { default: { mutate } } as any)
+  try {
+    await runtime.enqueue('default', SAVE_MUTATION, { value: 'later' })
+    await runtime.enqueue('default', SAVE_MUTATION, { value: 'earlier' })
+    for (const [index, createdAt] of [20, 10].entries()) {
+      const key = storage.key(index)!
+      storage.setItem(key, JSON.stringify({ ...JSON.parse(storage.getItem(key)!), createdAt, sequence: undefined, dispatched: true }))
+    }
+    const [earlier, later] = runtime.uncertain('default')
+    expect(earlier?.variables?.value).toBe('earlier')
+    await runtime.resolveUncertain('default', earlier!.id, 'not-committed')
+    expect(runtime.nextUncertain('default')).toBeUndefined()
+    await expect(runtime.resolveUncertain('default', later!.id, 'committed')).rejects.toThrow(/earliest/)
+    await runtime.sync('default', { untilUncertain: true })
+    expect(writes).toEqual(['earlier'])
+    expect(runtime.nextUncertain('default')?.id).toBe(later!.id)
+    expect(runtime.pending('default')).toBe(1)
+  } finally { runtime.stop(); vi.unstubAllGlobals() }
+})
+
+it.each([2, 5])('restores %i equal-time edits in durable insertion order', async count => {
+  const storage = createTestStorage()
+  vi.stubGlobal('localStorage', storage)
+  let id = count
+  vi.stubGlobal('crypto', { randomUUID: () => '00000000-0000-4000-8000-' + String(id--).padStart(12, '0') })
+  vi.stubGlobal('performance', { timeOrigin: 1000, now: () => 10 })
+  vi.stubGlobal('navigator', Object.create(navigator, { locks: { value: {
+    request: async (_key: string, task: () => unknown) => task(),
+  } } }))
+  const saved: number[] = []
+  const make = () => createApolloOfflineRuntime({ allowOffline: true, getSessionId: () => 'owner' },
+    { default: { mutate: async ({ variables }: any) => {
+      saved.push(variables.value)
+      return { data: { save: true } }
+    } } } as any)
+  const initial = make()
+  const values = Array.from({ length: count }, (_, index) => index)
+  try {
+    for (const value of values) await initial.enqueue('default', SAVE_MUTATION, { value })
+    initial.stop()
+    const restored = make()
+    try {
+      await restored.sync()
+      expect(saved).toEqual(values)
+      expect(saved.at(-1)).toBe(count - 1)
+      expect(restored.pending('default')).toBe(0)
+    } finally { restored.stop() }
+  } finally { initial.stop(); vi.unstubAllGlobals() }
+})
+
+it('retains timestamp collisions from pre-sequence queues for explicit review', async () => {
+  const storage = createTestStorage()
+  vi.stubGlobal('localStorage', storage)
+  vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('navigator', Object.create(navigator, { locks: { value: {
+    request: async (_key: string, task: () => unknown) => task(),
+  } } }))
+  const mutate = vi.fn(async () => ({ data: { save: true } }))
+  const runtime = createApolloOfflineRuntime({ allowOffline: true, getSessionId: () => 'owner' }, { default: { mutate } } as any)
+  try {
+    for (const value of ['left', 'right']) await runtime.enqueue('default', SAVE_MUTATION, { value })
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index)!
+      const item = JSON.parse(storage.getItem(key)!)
+      delete item.sequence
+      item.createdAt = 1010
+      storage.setItem(key, JSON.stringify(item))
+    }
+    await expect(runtime.sync()).rejects.toThrow(/confirmation/)
+    expect(mutate).not.toHaveBeenCalled()
+    expect(runtime.uncertain('default')).toHaveLength(2)
+    const head = runtime.nextUncertain('default')!
+    await runtime.resolveUncertain('default', head.id, 'not-committed')
+    await runtime.sync('default', { untilUncertain: true })
+    expect(mutate).toHaveBeenCalledOnce()
+    expect(runtime.pending('default')).toBe(1)
+  } finally { runtime.stop(); vi.unstubAllGlobals() }
+})
+
+it('drains an earlier lock waiter even when the queue still looks empty', async () => {
+  vi.stubGlobal('localStorage', createTestStorage())
+  vi.stubGlobal('crypto', webcrypto)
+  let release!: () => void
+  let tail = new Promise<void>(resolve => { release = resolve })
+  const locks = { request: (_name: string, work: () => Promise<void>) => {
+    const turn = tail.then(work)
+    tail = turn.catch(() => {})
+    return turn
+  } }
+  vi.stubGlobal('navigator', Object.create(navigator, { locks: { value: locks } }))
+  const writes: string[] = []
+  const runtime = createApolloOfflineRuntime({ allowOffline: true, getSessionId: () => 'owner' }, {
+    default: { mutate: async ({variables}: any) => {
+      writes.push(variables.value)
+      return { data: { save: true } }
+    } },
+  } as any)
+  try {
+    const older = runtime.enqueue('default', SAVE_MUTATION, {value: 'A'})
+    expect(runtime.pending('default')).toBe(0)
+    const online = runtime.beforeOnlineMutation('default').then(() => writes.push('B'))
+    release()
+    await Promise.all([older, online])
+    expect(writes).toEqual(['A', 'B'])
+    expect(runtime.pending('default')).toBe(0)
+  } finally { release(); runtime.stop(); vi.unstubAllGlobals() }
+})
+
+it.each(['unavailable', 'anonymous'])('keeps private edits queued when foreground identity recovery is %s', async outcome => {
+  vi.stubGlobal('localStorage', createTestStorage())
+  vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('navigator', Object.create(navigator, { locks: { value: {
+    request: async (_key: string, task: () => unknown) => task(),
+  } } }))
+  let owner: string | null = 'original'
+  const recover = vi.fn(async () => {
+    if (outcome === 'unavailable') throw new Error('Broker unavailable')
+  })
+  const mutate = vi.fn()
+  const runtime = createApolloOfflineRuntime({
+    allowOffline: true, browserSessionEndpoint: '/session', getSessionId: () => owner,
+  }, { default: { mutate } } as any, undefined, recover)
+  try {
+    await runtime.enqueue('default', SAVE_MUTATION, {value: 'earlier'})
+    owner = null
+    await expect(runtime.beforeOnlineMutation('default')).rejects.toThrow(
+      outcome === 'unavailable' ? /unavailable/ : /Verify the session/)
+    expect(recover).toHaveBeenCalledOnce()
+    expect(mutate).not.toHaveBeenCalled()
+    owner = 'original'
+    expect(runtime.pending('default')).toBe(1)
+  } finally { runtime.stop(); vi.unstubAllGlobals() }
 })
