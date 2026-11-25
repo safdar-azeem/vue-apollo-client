@@ -59,18 +59,18 @@ export const getCookieValueFromHeader = (
 	key: string,
 ): string | undefined => {
 	if (!header || !key) return undefined
+	let value: string | undefined
 	for (const segment of header.split(';')) {
 		const separator = segment.indexOf('=')
 		if (separator <= 0) continue
 		if (segment.slice(0, separator).trim() !== key) continue
 		const raw = segment.slice(separator + 1).trim()
-		try {
-			return decodeURIComponent(raw.replace(/^"|"$/g, ''))
-		} catch {
-			return raw
-		}
+		let decoded = raw
+		try { decoded = decodeURIComponent(raw.replace(/^"|"$/g, '')) } catch { /* Literal cookie value. */ }
+		if (value !== undefined && value !== decoded) return undefined
+		value = decoded
 	}
-	return undefined
+	return value
 }
 
 const getLegacyDomainRemovalOptions = (
@@ -198,14 +198,23 @@ export const setToken = (
 	}
 }
 
+// Browser cookie order cannot distinguish the intended host/domain scope.
+const readBrowserCookie = (key: string) => {
+	const header = typeof document === 'undefined' ? '' : document.cookie
+	if (header.split(';').filter(part => part.trimStart().startsWith(key + '=')).length > 1) {
+		return getCookieValueFromHeader(header, key)
+	}
+	return Cookies.get(key)
+}
+
 export const getToken = (key = '', _options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	return Cookies.get(tokenKey)
+	return readBrowserCookie(tokenKey)
 }
 
 export const getRefreshToken = (key = '', _options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
-	return Cookies.get(`${tokenKey}_refresh`)
+	return readBrowserCookie(`${tokenKey}_refresh`)
 }
 
 /**
@@ -213,7 +222,7 @@ export const getRefreshToken = (key = '', _options?: CookieAttributes) => {
  * or legacy parent-domain variants are cleared on explicit sign-out so stale
  * cookies cannot survive termination.
  */
-export const removeToken = (key = '', options?: CookieAttributes) => {
+const removeActiveTokens = (key = '', options?: CookieAttributes) => {
 	const tokenKey = getKey(key)
 	const finalOptions = getCookieOptions(options)
 	Cookies.remove(tokenKey, finalOptions)
@@ -224,6 +233,16 @@ export const removeToken = (key = '', options?: CookieAttributes) => {
 		Cookies.remove(`${tokenKey}_refresh`, hostOnlyOptions)
 	}
 	removeLegacyDomainCookies(tokenKey, options)
+}
+
+export const removeToken = (key = '', options?: CookieAttributes) => {
+  removeActiveTokens(key, options)
+  const name = getKey(key)
+  const scope = getCookieOptions(options)
+  for (const attributes of [scope, ...(scope.domain ? [{ ...scope, domain: undefined }] : [])]) {
+    Cookies.remove(`temp_${name}`, attributes)
+    Cookies.remove(`temp_${name}_refresh`, attributes)
+  }
 }
 
 export const stashToken = (key = '', options?: CookieAttributes) => {
@@ -245,7 +264,7 @@ export const stashToken = (key = '', options?: CookieAttributes) => {
 		if (refresh) {
 			Cookies.set(`temp_${tokenKey}_refresh`, refresh, finalOptions)
 		}
-		removeToken(key, options)
+		removeActiveTokens(key, options)
 	}
 }
 
