@@ -334,8 +334,8 @@ describe('generated-document refresh runtime', () => {
   })
 
   it('preserves newer credentials installed by a competing app refresh for the same account and retries once', async () => {
-    const expiredAccess = jwt({ _id: 'user-1', sid: 'jti-1' })
-    const newerAccess = jwt({ _id: 'user-1', sid: 'jti-2' })
+    const expiredAccess = jwt({ _id: 'user-1', lsid: 'same-login', sid: 'jti-1' })
+    const newerAccess = jwt({ _id: 'user-1', lsid: 'same-login', sid: 'jti-2' })
     let token = expiredAccess
     let refreshToken = jwt({ sub: 'user-1', jti: 'jti-1' })
     const clearTokens = vi.fn(() => {
@@ -1247,7 +1247,7 @@ describe('generated-document refresh runtime', () => {
       if (body.operationName === 'CreateRuntimeItem') {
         mutationAuthHeaders.push(auth)
         return json({
-          errors: [{ message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } }],
+          errors: [{ message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED', executionStarted: false } }],
         })
       }
       if (body.operationName === 'RefreshRuntimeToken') {
